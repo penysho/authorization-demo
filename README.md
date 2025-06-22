@@ -18,7 +18,7 @@ ECサイトのバックエンドAPIを想定し、商品管理における認可
 
 ### 使用技術
 
-- Go 1.22+
+- Go 1.23+
 - Gin Web Framework
 - Casbin v2 (認可ライブラリ)
 - JWT認証
@@ -26,23 +26,27 @@ ECサイトのバックエンドAPIを想定し、商品管理における認可
 ## セットアップ
 
 1. 依存関係をインストール
+
 ```bash
 go mod tidy
 ```
 
 2. アプリケーションを起動
+
 ```bash
 go run main.go
 ```
 
-3. サーバーが起動します（デフォルト: http://localhost:8080）
+3. サーバーが起動します（デフォルト: <http://localhost:8080）>
 
 ## API エンドポイント
 
 ### 認証
+
 - `POST /api/auth/login` - ログイン（JWT トークン取得）
 
 ### 商品管理
+
 - `GET /api/products` - 商品一覧取得
 - `GET /api/products/:id` - 商品詳細取得
 - `PUT /api/products/:id` - 商品更新
@@ -77,4 +81,4 @@ go run main.go
 │   ├── model/             # データモデル
 │   └── service/           # ビジネスロジック
 └── README.md
-``` 
+```
