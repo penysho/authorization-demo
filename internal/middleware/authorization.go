@@ -53,3 +53,35 @@ func resolveResource(c *gin.Context, resource string) string {
 func RequirePermission(authzService *service.AuthorizationService, resource, action string) gin.HandlerFunc {
 	return AuthorizationMiddleware(authzService, resource, action)
 }
+
+// EnhancedRequirePermission は強化された認可サービス用のミドルウェアを返す
+func EnhancedRequirePermission(authzService *service.EnhancedAuthorizationService, resource, action string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// コンテキストからユーザー情報を取得
+		user, exists := GetUserFromContext(c)
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found in context"})
+			c.Abort()
+			return
+		}
+
+		// リソース名を動的に解決（例：商品IDが含まれる場合）
+		resolvedResource := resolveResource(c, resource)
+
+		// 権限チェック
+		allowed, err := authzService.CheckPermission(user, resolvedResource, action)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Authorization check failed"})
+			c.Abort()
+			return
+		}
+
+		if !allowed {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
