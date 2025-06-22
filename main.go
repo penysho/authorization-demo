@@ -26,12 +26,6 @@ func main() {
 	authService := auth.NewService()
 	productService := service.NewProductService()
 
-	// 基本の認可サービス（DebugHandler用）
-	basicAuthzService, err := service.NewAuthorizationService()
-	if err != nil {
-		log.Fatalf("Failed to initialize basic authorization service: %v", err)
-	}
-
 	// ポリシーストアの初期化（環境に応じて選択）
 	var policyStore service.PolicyStore
 	if dbURL != "" {
@@ -56,7 +50,6 @@ func main() {
 	// ハンドラーを初期化
 	authHandler := handler.NewAuthHandler(authService)
 	productHandler := handler.NewProductHandler(productService)
-	debugHandler := handler.NewDebugHandler(basicAuthzService)
 	policyHandler := handler.NewPolicyHandler(enhancedAuthzService)
 
 	// Ginエンジンを初期化
@@ -145,13 +138,6 @@ func main() {
 			},
 		})
 	})
-
-	// デバッグエンドポイント（認証必要）
-	debug := api.Group("/debug")
-	debug.Use(middleware.AuthMiddleware(authService))
-	{
-		debug.GET("/permissions", debugHandler.CheckUserPermissions)
-	}
 
 	// ルート情報表示エンドポイント
 	r.GET("/", func(c *gin.Context) {
