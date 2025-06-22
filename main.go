@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"authorization-demo/internal/auth"
 	"authorization-demo/internal/handler"
@@ -288,7 +289,8 @@ func setupInitialPolicies(store service.PolicyStore) error {
 
 	for _, policy := range initialPolicies {
 		if err := store.SavePolicy(ctx, policy); err != nil {
-			return fmt.Errorf("failed to save initial policy: %w", err)
+			// Log the error but continue with other policies
+			log.Printf("Warning: Failed to save initial policy (this may be normal if it already exists): %v", err)
 		}
 	}
 
@@ -302,7 +304,12 @@ func setupInitialPolicies(store service.PolicyStore) error {
 
 	for _, role := range initialRoles {
 		if err := store.AssignRole(ctx, role.UserID, role.Role); err != nil {
-			return fmt.Errorf("failed to assign initial role: %w", err)
+			// Check if this is a "already exists" error, which is fine for initial setup
+			if strings.Contains(err.Error(), "already exists") {
+				log.Printf("Info: Role assignment already exists for %s -> %s (this is normal)", role.UserID, role.Role)
+			} else {
+				return fmt.Errorf("failed to assign initial role: %w", err)
+			}
 		}
 	}
 

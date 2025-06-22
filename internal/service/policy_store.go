@@ -68,7 +68,7 @@ type PolicyRuleDB struct {
 	Resource   string    `gorm:"not null;index"`
 	Action     string    `gorm:"not null;index"`
 	Condition  string    `gorm:"type:text"`
-	Attributes string    `gorm:"type:jsonb"` // JSON storage for attributes
+	Attributes *string   `gorm:"type:jsonb"` // JSON storage for attributes, nullable
 	Effect     string    `gorm:"not null;default:'allow'"`
 	CreatedAt  time.Time `gorm:"autoCreateTime"`
 	UpdatedAt  time.Time `gorm:"autoUpdateTime"`
@@ -94,8 +94,8 @@ func (RoleAssignmentDB) TableName() string {
 type PolicyChangeDB struct {
 	ID        string    `gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
 	Type      string    `gorm:"not null;index"`
-	Before    string    `gorm:"type:jsonb"` // JSON storage for before state
-	After     string    `gorm:"type:jsonb"` // JSON storage for after state
+	Before    *string   `gorm:"type:jsonb"` // JSON storage for before state, nullable
+	After     *string   `gorm:"type:jsonb"` // JSON storage for after state, nullable
 	ChangedBy string    `gorm:"not null;index"`
 	ChangedAt time.Time `gorm:"autoCreateTime;index"`
 	Reason    string    `gorm:"type:text"`
@@ -126,13 +126,14 @@ func (s *DatabasePolicyStore) AutoMigrate() error {
 
 // Helper functions to convert between models
 func (s *DatabasePolicyStore) policyRuleToDB(rule PolicyRule) (*PolicyRuleDB, error) {
-	var attributesJSON string
-	if rule.Attributes != nil {
+	var attributesJSON *string
+	if rule.Attributes != nil && len(rule.Attributes) > 0 {
 		bytes, err := json.Marshal(rule.Attributes)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal attributes: %w", err)
 		}
-		attributesJSON = string(bytes)
+		jsonStr := string(bytes)
+		attributesJSON = &jsonStr
 	}
 
 	return &PolicyRuleDB{
@@ -152,8 +153,8 @@ func (s *DatabasePolicyStore) policyRuleToDB(rule PolicyRule) (*PolicyRuleDB, er
 
 func (s *DatabasePolicyStore) policyRuleFromDB(dbRule PolicyRuleDB) (PolicyRule, error) {
 	var attributes map[string]string
-	if dbRule.Attributes != "" {
-		err := json.Unmarshal([]byte(dbRule.Attributes), &attributes)
+	if dbRule.Attributes != nil && *dbRule.Attributes != "" {
+		err := json.Unmarshal([]byte(*dbRule.Attributes), &attributes)
 		if err != nil {
 			return PolicyRule{}, fmt.Errorf("failed to unmarshal attributes: %w", err)
 		}
@@ -193,14 +194,15 @@ func (s *DatabasePolicyStore) roleAssignmentFromDB(dbAssignment RoleAssignmentDB
 }
 
 func (s *DatabasePolicyStore) policyChangeToDB(change PolicyChange) (*PolicyChangeDB, error) {
-	var beforeJSON, afterJSON string
+	var beforeJSON, afterJSON *string
 
 	if change.Before != nil {
 		bytes, err := json.Marshal(change.Before)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal before state: %w", err)
 		}
-		beforeJSON = string(bytes)
+		jsonStr := string(bytes)
+		beforeJSON = &jsonStr
 	}
 
 	if change.After != nil {
@@ -208,7 +210,8 @@ func (s *DatabasePolicyStore) policyChangeToDB(change PolicyChange) (*PolicyChan
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal after state: %w", err)
 		}
-		afterJSON = string(bytes)
+		jsonStr := string(bytes)
+		afterJSON = &jsonStr
 	}
 
 	return &PolicyChangeDB{
@@ -225,15 +228,15 @@ func (s *DatabasePolicyStore) policyChangeToDB(change PolicyChange) (*PolicyChan
 func (s *DatabasePolicyStore) policyChangeFromDB(dbChange PolicyChangeDB) (PolicyChange, error) {
 	var before, after interface{}
 
-	if dbChange.Before != "" {
-		err := json.Unmarshal([]byte(dbChange.Before), &before)
+	if dbChange.Before != nil && *dbChange.Before != "" {
+		err := json.Unmarshal([]byte(*dbChange.Before), &before)
 		if err != nil {
 			return PolicyChange{}, fmt.Errorf("failed to unmarshal before state: %w", err)
 		}
 	}
 
-	if dbChange.After != "" {
-		err := json.Unmarshal([]byte(dbChange.After), &after)
+	if dbChange.After != nil && *dbChange.After != "" {
+		err := json.Unmarshal([]byte(*dbChange.After), &after)
 		if err != nil {
 			return PolicyChange{}, fmt.Errorf("failed to unmarshal after state: %w", err)
 		}
