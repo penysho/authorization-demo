@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "postgres": {
+      "command": "npx",
+      "args": [
+        "-y @modelcontextprotocol/server-postgres postgresql://postgres:postgres@localhost:5436/postgres"
+      ]
+    }
+  }
+}
