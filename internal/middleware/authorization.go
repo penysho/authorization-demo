@@ -17,8 +17,8 @@ func resolveResource(c *gin.Context, resource string) string {
 	return resource
 }
 
-// EnhancedRequirePermission は強化された認可サービス用のミドルウェアを返す
-func EnhancedRequirePermission(authzService *service.EnhancedAuthorizationService, resource, action string) gin.HandlerFunc {
+// RequirePermission は認可サービス用のミドルウェアを返す
+func RequirePermission(authzService *service.AuthorizationService, resource, action string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// コンテキストからユーザー情報を取得
 		user, exists := GetUserFromContext(c)

@@ -11,11 +11,11 @@ import (
 
 // PolicyHandler はポリシー管理のためのHTTPハンドラー
 type PolicyHandler struct {
-	authzService *service.EnhancedAuthorizationService
+	authzService *service.AuthorizationService
 }
 
 // NewPolicyHandler creates a new policy handler
-func NewPolicyHandler(authzService *service.EnhancedAuthorizationService) *PolicyHandler {
+func NewPolicyHandler(authzService *service.AuthorizationService) *PolicyHandler {
 	return &PolicyHandler{
 		authzService: authzService,
 	}

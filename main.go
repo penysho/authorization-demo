@@ -16,43 +16,46 @@ import (
 )
 
 func main() {
-	// 設定の読み込み
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		log.Println("DATABASE_URL not set, using in-memory store")
+	// Initialize database connection
+	dbConfig := service.DefaultDatabaseConfig()
+	db, err := service.ConnectDatabase(dbConfig)
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
 	}
 
-	// サービスを初期化
+	// Perform database migration
+	if err := service.MigratePolicyStoreSchema(db); err != nil {
+		log.Fatalf("Failed to migrate database schema: %v", err)
+	}
+
+	// Initialize services
 	authService := auth.NewService()
 	productService := service.NewProductService()
 
-	// ポリシーストアの初期化（環境に応じて選択）
-	var policyStore service.PolicyStore
-	if dbURL != "" {
-		// データベースベースのポリシーストア
-		policyStore = service.NewDatabasePolicyStore()
-	} else {
-		// 開発環境ではインメモリストアを使用
-		policyStore = service.NewInMemoryPolicyStore()
+	// Choose policy store implementation
+	// For development with database:
+	policyStore := service.NewDatabasePolicyStore(db)
 
-		// 初期データの設定
-		if err := setupInitialPolicies(policyStore); err != nil {
-			log.Fatalf("Failed to setup initial policies: %v", err)
-		}
+	// For in-memory (original implementation):
+	// policyStore := service.NewInMemoryPolicyStore()
+
+	// 初期ポリシーの設定
+	if err := setupInitialPolicies(policyStore); err != nil {
+		log.Fatalf("Failed to setup initial policies: %v", err)
 	}
 
-	// 強化された認可サービスの初期化
-	enhancedAuthzService, err := service.NewEnhancedAuthorizationService(policyStore)
+	// Initialize authorization service
+	authzService, err := service.NewAuthorizationService(policyStore)
 	if err != nil {
-		log.Fatalf("Failed to initialize enhanced authorization service: %v", err)
+		log.Fatalf("Failed to initialize authorization service: %v", err)
 	}
 
-	// ハンドラーを初期化
+	// Initialize handlers
 	authHandler := handler.NewAuthHandler(authService)
 	productHandler := handler.NewProductHandler(productService)
-	policyHandler := handler.NewPolicyHandler(enhancedAuthzService)
+	policyHandler := handler.NewPolicyHandler(authzService)
 
-	// Ginエンジンを初期化
+	// Setup Gin router
 	r := gin.Default()
 
 	// CORS設定（開発用）
@@ -69,60 +72,40 @@ func main() {
 		c.Next()
 	})
 
-	// APIルートグループ
+	// Public routes
+	r.POST("/api/auth/login", authHandler.Login)
+
+	// Protected routes
 	api := r.Group("/api")
+	api.Use(middleware.AuthMiddleware(authService))
 
-	// 認証エンドポイント（認証不要）
-	auth := api.Group("/auth")
-	{
-		auth.POST("/login", authHandler.Login)
-	}
+	// Product routes
+	api.GET("/products",
+		middleware.RequirePermission(authzService, "products", "read"),
+		productHandler.GetProducts)
+	api.GET("/products/:id",
+		middleware.RequirePermission(authzService, "products", "read"),
+		productHandler.GetProduct)
+	api.PUT("/products/:id",
+		middleware.RequirePermission(authzService, "products", "write"),
+		productHandler.UpdateProduct)
+	api.DELETE("/products/:id",
+		middleware.RequirePermission(authzService, "products", "delete"),
+		productHandler.DeleteProduct)
+	api.POST("/products",
+		middleware.RequirePermission(authzService, "products", "write"),
+		productHandler.CreateProduct)
 
-	// 商品エンドポイント（認証必要）
-	products := api.Group("/products")
-	products.Use(middleware.AuthMiddleware(authService))
-	{
-		// 商品一覧取得（全ユーザーが閲覧可能）
-		products.GET("",
-			middleware.EnhancedRequirePermission(enhancedAuthzService, "products", "read"),
-			productHandler.GetProducts)
-
-		// 商品詳細取得（年齢制限あり - ABACで制御）
-		products.GET("/:id",
-			middleware.EnhancedRequirePermission(enhancedAuthzService, "products", "read"),
-			productHandler.GetProduct)
-
-		// 商品更新（運用者以上）
-		products.PUT("/:id",
-			middleware.EnhancedRequirePermission(enhancedAuthzService, "products", "write"),
-			productHandler.UpdateProduct)
-
-		// 商品削除（管理者のみ）
-		products.DELETE("/:id",
-			middleware.EnhancedRequirePermission(enhancedAuthzService, "products", "delete"),
-			productHandler.DeleteProduct)
-
-		// 商品作成（管理者のみ）
-		products.POST("",
-			middleware.EnhancedRequirePermission(enhancedAuthzService, "products", "write"),
-			productHandler.CreateProduct)
-	}
-
-	// ポリシー管理エンドポイント（管理者のみ）
-	policies := api.Group("/policies")
-	policies.Use(middleware.AuthMiddleware(authService))
-	policies.Use(middleware.EnhancedRequirePermission(enhancedAuthzService, "policies", "admin"))
-	{
-		policies.POST("", policyHandler.CreatePolicy)
-		policies.DELETE("/:id", policyHandler.DeletePolicy)
-		policies.POST("/roles/assign", policyHandler.AssignRole)
-		policies.GET("/audit", policyHandler.GetAuditLog)
-		policies.GET("/stats", policyHandler.GetPolicyStats)
-		policies.POST("/refresh", policyHandler.RefreshPolicies)
-		policies.POST("/templates", policyHandler.CreatePolicyFromTemplate)
-		policies.POST("/validate", policyHandler.ValidatePolicy)
-		policies.GET("/health", policyHandler.HealthCheck)
-	}
+	// Policy management routes (admin only)
+	api.POST("/policies",
+		middleware.RequirePermission(authzService, "policies", "admin"),
+		policyHandler.CreatePolicy)
+	api.POST("/roles/assign",
+		middleware.RequirePermission(authzService, "policies", "admin"),
+		policyHandler.AssignRole)
+	api.GET("/audit-log",
+		middleware.RequirePermission(authzService, "policies", "admin"),
+		policyHandler.GetAuditLog)
 
 	// ヘルスチェックエンドポイント
 	r.GET("/health", func(c *gin.Context) {
@@ -162,15 +145,9 @@ func main() {
 					"delete": "DELETE /api/products/:id",
 				},
 				"policies": gin.H{
-					"create":        "POST /api/policies",
-					"delete":        "DELETE /api/policies/:id",
-					"assign_role":   "POST /api/policies/roles/assign",
-					"audit_log":     "GET /api/policies/audit",
-					"statistics":    "GET /api/policies/stats",
-					"refresh":       "POST /api/policies/refresh",
-					"from_template": "POST /api/policies/templates",
-					"validate":      "POST /api/policies/validate",
-					"health_check":  "GET /api/policies/health",
+					"create":      "POST /api/policies",
+					"assign_role": "POST /api/policies/roles/assign",
+					"audit_log":   "GET /api/policies/audit",
 				},
 			},
 			"test_users": gin.H{

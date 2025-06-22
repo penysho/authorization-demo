@@ -11,8 +11,8 @@ import (
 	"github.com/casbin/casbin/v2"
 )
 
-// EnhancedAuthorizationService は強化された認可サービス
-type EnhancedAuthorizationService struct {
+// AuthorizationService は認可サービス
+type AuthorizationService struct {
 	policyStore  PolicyStore
 	rbacEnforcer *casbin.Enforcer
 	abacEnforcer *casbin.Enforcer
@@ -32,8 +32,8 @@ type PolicyTemplate struct {
 	Variables   map[string]string `json:"variables"`
 }
 
-// NewEnhancedAuthorizationService creates a new enhanced authorization service
-func NewEnhancedAuthorizationService(policyStore PolicyStore) (*EnhancedAuthorizationService, error) {
+// NewAuthorizationService creates a new authorization service
+func NewAuthorizationService(policyStore PolicyStore) (*AuthorizationService, error) {
 	// Casbinエンフォーサーの初期化
 	rbacEnforcer, err := casbin.NewEnforcer("config/rbac_model.conf")
 	if err != nil {
@@ -45,7 +45,7 @@ func NewEnhancedAuthorizationService(policyStore PolicyStore) (*EnhancedAuthoriz
 		return nil, fmt.Errorf("failed to initialize ABAC enforcer: %w", err)
 	}
 
-	service := &EnhancedAuthorizationService{
+	service := &AuthorizationService{
 		policyStore:   policyStore,
 		rbacEnforcer:  rbacEnforcer,
 		abacEnforcer:  abacEnforcer,
@@ -62,7 +62,7 @@ func NewEnhancedAuthorizationService(policyStore PolicyStore) (*EnhancedAuthoriz
 }
 
 // RefreshPolicies はポリシーストアからポリシーを再読み込み
-func (s *EnhancedAuthorizationService) RefreshPolicies(ctx context.Context) error {
+func (s *AuthorizationService) RefreshPolicies(ctx context.Context) error {
 	// ポリシーの読み込み
 	policies, err := s.policyStore.LoadPolicies(ctx)
 	if err != nil {
@@ -100,7 +100,7 @@ func (s *EnhancedAuthorizationService) RefreshPolicies(ctx context.Context) erro
 }
 
 // CheckPermission は総合的な権限チェックを行う
-func (s *EnhancedAuthorizationService) CheckPermission(user *model.User, resource, action string) (bool, error) {
+func (s *AuthorizationService) CheckPermission(user *model.User, resource, action string) (bool, error) {
 	ctx := context.Background()
 
 	// キャッシュの有効性チェック
@@ -134,7 +134,7 @@ func (s *EnhancedAuthorizationService) CheckPermission(user *model.User, resourc
 }
 
 // checkRBACPermission はRBACによる権限チェック
-func (s *EnhancedAuthorizationService) checkRBACPermission(user *model.User, resource, action string) (bool, error) {
+func (s *AuthorizationService) checkRBACPermission(user *model.User, resource, action string) (bool, error) {
 	baseResource := resource
 	if strings.HasPrefix(resource, "product_") {
 		baseResource = "products"
@@ -149,7 +149,7 @@ func (s *EnhancedAuthorizationService) checkRBACPermission(user *model.User, res
 }
 
 // checkABACPermission はABACによる権限チェック
-func (s *EnhancedAuthorizationService) checkABACPermission(user *model.User, resource, action string) (bool, error) {
+func (s *AuthorizationService) checkABACPermission(user *model.User, resource, action string) (bool, error) {
 	userRequest := &model.UserRequest{
 		ID:       user.ID,
 		Username: user.Username,
@@ -166,7 +166,7 @@ func (s *EnhancedAuthorizationService) checkABACPermission(user *model.User, res
 }
 
 // AddPolicy は新しいポリシーを追加
-func (s *EnhancedAuthorizationService) AddPolicy(ctx context.Context, policyType, subject, resource, action, createdBy string, attributes map[string]string) error {
+func (s *AuthorizationService) AddPolicy(ctx context.Context, policyType, subject, resource, action, createdBy string, attributes map[string]string) error {
 	rule := PolicyRule{
 		Type:       policyType,
 		Subject:    subject,
@@ -199,7 +199,7 @@ func (s *EnhancedAuthorizationService) AddPolicy(ctx context.Context, policyType
 }
 
 // RemovePolicy はポリシーを削除
-func (s *EnhancedAuthorizationService) RemovePolicy(ctx context.Context, policyID, deletedBy string) error {
+func (s *AuthorizationService) RemovePolicy(ctx context.Context, policyID, deletedBy string) error {
 	// 削除前のポリシーを取得（監査ログ用）
 	policies, err := s.policyStore.LoadPolicies(ctx)
 	if err != nil {
@@ -239,7 +239,7 @@ func (s *EnhancedAuthorizationService) RemovePolicy(ctx context.Context, policyI
 }
 
 // AssignRole はユーザーにロールを割り当て
-func (s *EnhancedAuthorizationService) AssignRole(ctx context.Context, userID, role, assignedBy string) error {
+func (s *AuthorizationService) AssignRole(ctx context.Context, userID, role, assignedBy string) error {
 	if err := s.policyStore.AssignRole(ctx, userID, role); err != nil {
 		return fmt.Errorf("failed to assign role: %w", err)
 	}
@@ -264,12 +264,12 @@ func (s *EnhancedAuthorizationService) AssignRole(ctx context.Context, userID, r
 }
 
 // GetAuditLog は監査ログを取得
-func (s *EnhancedAuthorizationService) GetAuditLog(ctx context.Context, from, to time.Time) ([]PolicyChange, error) {
+func (s *AuthorizationService) GetAuditLog(ctx context.Context, from, to time.Time) ([]PolicyChange, error) {
 	return s.policyStore.GetAuditLog(ctx, from, to)
 }
 
 // CreatePolicyFromTemplate はテンプレートからポリシーを作成
-func (s *EnhancedAuthorizationService) CreatePolicyFromTemplate(ctx context.Context, template PolicyTemplate, variables map[string]string, createdBy string) error {
+func (s *AuthorizationService) CreatePolicyFromTemplate(ctx context.Context, template PolicyTemplate, variables map[string]string, createdBy string) error {
 	// テンプレート変数の置換
 	policyTemplate := template.Template
 	for key, value := range variables {
@@ -295,7 +295,7 @@ func (s *EnhancedAuthorizationService) CreatePolicyFromTemplate(ctx context.Cont
 }
 
 // ValidatePolicy はポリシーの妥当性を検証
-func (s *EnhancedAuthorizationService) ValidatePolicy(rule PolicyRule) error {
+func (s *AuthorizationService) ValidatePolicy(rule PolicyRule) error {
 	if rule.Subject == "" {
 		return fmt.Errorf("subject cannot be empty")
 	}
@@ -316,7 +316,7 @@ func (s *EnhancedAuthorizationService) ValidatePolicy(rule PolicyRule) error {
 }
 
 // GetPolicyStats はポリシーの統計情報を取得
-func (s *EnhancedAuthorizationService) GetPolicyStats(ctx context.Context) (map[string]interface{}, error) {
+func (s *AuthorizationService) GetPolicyStats(ctx context.Context) (map[string]interface{}, error) {
 	policies, err := s.policyStore.LoadPolicies(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load policies: %w", err)
