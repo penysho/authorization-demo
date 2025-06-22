@@ -127,7 +127,7 @@ func (s *DatabasePolicyStore) AutoMigrate() error {
 // Helper functions to convert between models
 func (s *DatabasePolicyStore) policyRuleToDB(rule PolicyRule) (*PolicyRuleDB, error) {
 	var attributesJSON *string
-	if rule.Attributes != nil && len(rule.Attributes) > 0 {
+	if len(rule.Attributes) > 0 {
 		bytes, err := json.Marshal(rule.Attributes)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal attributes: %w", err)

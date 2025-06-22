@@ -10,6 +10,7 @@ import (
 
 	"authorization-demo/internal/auth"
 	"authorization-demo/internal/handler"
+	"authorization-demo/internal/infrastructure"
 	"authorization-demo/internal/middleware"
 	"authorization-demo/internal/service"
 
@@ -18,14 +19,14 @@ import (
 
 func main() {
 	// Initialize database connection
-	dbConfig := service.DefaultDatabaseConfig()
-	db, err := service.ConnectDatabase(dbConfig)
+	dbConfig := infrastructure.DefaultDatabaseConfig()
+	db, err := infrastructure.ConnectDatabase(dbConfig)
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 
 	// Perform database migration
-	if err := service.MigratePolicyStoreSchema(db); err != nil {
+	if err := infrastructure.MigratePolicyStoreSchema(db); err != nil {
 		log.Fatalf("Failed to migrate database schema: %v", err)
 	}
 

@@ -1,6 +1,7 @@
-package service
+package infrastructure
 
 import (
+	"authorization-demo/internal/service"
 	"fmt"
 	"log"
 	"os"
@@ -82,7 +83,7 @@ func ConnectDatabase(config *DatabaseConfig) (*gorm.DB, error) {
 
 // MigratePolicyStoreSchema performs database migration for policy store
 func MigratePolicyStoreSchema(db *gorm.DB) error {
-	store := NewDatabasePolicyStore(db)
+	store := service.NewDatabasePolicyStore(db)
 	return store.AutoMigrate()
 }
 
