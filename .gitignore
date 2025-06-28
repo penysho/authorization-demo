@@ -104,3 +104,4 @@ $RECYCLE.BIN/
 .env.*
 
 authorization-demo
+__debug_bin*
