@@ -11,6 +11,68 @@ import (
 	"github.com/casbin/casbin/v2"
 )
 
+// カスタム関数: 文字列に部分文字列が含まれているかチェック
+func stringContainsFunc(args ...interface{}) (interface{}, error) {
+	if len(args) != 2 {
+		return false, fmt.Errorf("stringContains requires exactly 2 arguments")
+	}
+
+	str, ok := args[0].(string)
+	if !ok {
+		return false, fmt.Errorf("first argument must be a string")
+	}
+
+	substr, ok := args[1].(string)
+	if !ok {
+		return false, fmt.Errorf("second argument must be a string")
+	}
+
+	return strings.Contains(str, substr), nil
+}
+
+// カスタム関数: 配列やカンマ区切り文字列に値が含まれているかチェック
+func containsFunc(args ...interface{}) (interface{}, error) {
+	if len(args) != 2 {
+		return false, fmt.Errorf("contains requires exactly 2 arguments")
+	}
+
+	// 第一引数: 配列またはカンマ区切り文字列
+	container := args[0]
+	target := args[1]
+
+	// ターゲットを文字列に変換
+	targetStr, ok := target.(string)
+	if !ok {
+		return false, fmt.Errorf("second argument must be a string")
+	}
+
+	// コンテナが文字列の場合（カンマ区切り）
+	if containerStr, ok := container.(string); ok {
+		if containerStr == "" {
+			return false, nil
+		}
+		parts := strings.Split(containerStr, ",")
+		for _, part := range parts {
+			if strings.TrimSpace(part) == targetStr {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+
+	// コンテナが配列の場合
+	if containerSlice, ok := container.([]interface{}); ok {
+		for _, item := range containerSlice {
+			if itemStr, ok := item.(string); ok && itemStr == targetStr {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+
+	return false, fmt.Errorf("first argument must be a string or array")
+}
+
 // AuthorizationService は認可サービス
 type AuthorizationService struct {
 	policyStore  PolicyStore
@@ -32,6 +94,15 @@ type PolicyTemplate struct {
 	Variables   map[string]string `json:"variables"`
 }
 
+// ProductAccessContext は商品アクセス制御のコンテキスト
+type ProductAccessContext struct {
+	UserID    string
+	User      *model.User
+	ProductID string
+	Product   *model.Product
+	Action    string
+}
+
 // NewAuthorizationService creates a new authorization service
 func NewAuthorizationService(policyStore PolicyStore) (*AuthorizationService, error) {
 	// Casbinエンフォーサーの初期化
@@ -44,6 +115,10 @@ func NewAuthorizationService(policyStore PolicyStore) (*AuthorizationService, er
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize ABAC enforcer: %w", err)
 	}
+
+	// カスタム関数を追加
+	abacEnforcer.AddFunction("contains", containsFunc)
+	abacEnforcer.AddFunction("stringContains", stringContainsFunc)
 
 	service := &AuthorizationService{
 		policyStore:   policyStore,
@@ -78,7 +153,11 @@ func (s *AuthorizationService) RefreshPolicies(ctx context.Context) error {
 		case "rbac":
 			s.rbacEnforcer.AddPolicy(policy.Subject, policy.Resource, policy.Action)
 		case "abac":
-			s.abacEnforcer.AddPolicy(policy.Subject, policy.Resource, policy.Action)
+			rule := policy.Subject
+			resource := policy.Resource
+			action := policy.Action
+
+			s.abacEnforcer.AddPolicy(rule, resource, action)
 		}
 	}
 
@@ -97,6 +176,67 @@ func (s *AuthorizationService) RefreshPolicies(ctx context.Context) error {
 	s.roleCacheTime = time.Now()
 
 	return nil
+}
+
+// CheckProductAccess は商品アクセス権限の総合チェック
+func (s *AuthorizationService) CheckProductAccess(ctx *ProductAccessContext) (bool, error) {
+	// キャッシュの有効性チェック
+	if time.Since(s.roleCacheTime) > s.cacheDuration {
+		if err := s.RefreshPolicies(context.Background()); err != nil {
+			return false, fmt.Errorf("failed to refresh policies: %w", err)
+		}
+	}
+
+	// 1. RBACによる基本的な権限チェック
+	rbacAllowed, err := s.checkRBACPermission(ctx.User, "products", ctx.Action)
+	if err != nil {
+		return false, err
+	}
+
+	if !rbacAllowed {
+		return false, nil
+	}
+
+	// 2. CasbinのABAC機能による詳細なアクセス制御チェック
+	abacAllowed, err := s.checkProductABACWithCasbin(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	return abacAllowed, nil
+}
+
+// checkProductABACWithCasbin はCasbinのABAC機能を使った商品アクセス制御
+func (s *AuthorizationService) checkProductABACWithCasbin(ctx *ProductAccessContext) (bool, error) {
+	// ユーザー属性の準備
+	userAttrs := map[string]interface{}{
+		"ID":       ctx.User.ID,
+		"Username": ctx.User.Username,
+		"Role":     ctx.User.Role,
+		"Age":      ctx.User.Age,
+		"Location": ctx.User.Location,
+		"Premium":  ctx.User.Premium,
+		"VIPLevel": ctx.User.VIPLevel,
+	}
+
+	// 商品オブジェクトの準備（商品属性を含む）
+	// Region文字列を配列に変換（含有チェック用）
+	var regionArray []string
+	if ctx.Product.Region != "" {
+		regionArray = strings.Split(ctx.Product.Region, ",")
+		// スペースをトリム
+		for i, region := range regionArray {
+			regionArray[i] = strings.TrimSpace(region)
+		}
+	}
+
+	// Casbin ABAC エンフォーサーによる権限チェック
+	allowed, err := s.abacEnforcer.Enforce(userAttrs, ctx.Product.ID, ctx.Action)
+	if err != nil {
+		return false, fmt.Errorf("ABAC permission check failed: %w", err)
+	}
+
+	return allowed, nil
 }
 
 // CheckPermission は総合的な権限チェックを行う
@@ -140,7 +280,7 @@ func (s *AuthorizationService) checkRBACPermission(user *model.User, resource, a
 		baseResource = "products"
 	}
 
-	allowed, err := s.rbacEnforcer.Enforce(user.Username, baseResource, action)
+	allowed, err := s.rbacEnforcer.Enforce(user.Role, baseResource, action)
 	if err != nil {
 		return false, fmt.Errorf("RBAC permission check failed: %w", err)
 	}
@@ -155,6 +295,9 @@ func (s *AuthorizationService) checkABACPermission(user *model.User, resource, a
 		Username: user.Username,
 		Role:     user.Role,
 		Age:      user.Age,
+		Location: user.Location,
+		Premium:  user.Premium,
+		VIPLevel: user.VIPLevel,
 	}
 
 	allowed, err := s.abacEnforcer.Enforce(userRequest, resource, action)
@@ -163,6 +306,54 @@ func (s *AuthorizationService) checkABACPermission(user *model.User, resource, a
 	}
 
 	return allowed, nil
+}
+
+// AddProductPolicy は商品固有のポリシーを追加
+func (s *AuthorizationService) AddProductPolicy(ctx context.Context, productID string, policy ProductPolicy, createdBy string) error {
+	rule := PolicyRule{
+		Type:     "abac",
+		Subject:  policy.SubjectRule,
+		Resource: "product_" + productID,
+		Action:   policy.Action,
+		Attributes: map[string]string{
+			"age_limit": fmt.Sprintf("%d", policy.AgeLimit),
+			"category":  policy.Category,
+			"is_adult":  fmt.Sprintf("%t", policy.IsAdult),
+			"region":    policy.Region,
+			"vip_level": fmt.Sprintf("%d", policy.VIPLevel),
+		},
+		Effect:    "allow",
+		CreatedBy: createdBy,
+	}
+
+	if err := s.policyStore.SavePolicy(ctx, rule); err != nil {
+		return fmt.Errorf("failed to save product policy: %w", err)
+	}
+
+	// 監査ログの記録
+	change := PolicyChange{
+		Type:      "product_policy_add",
+		After:     rule,
+		ChangedBy: createdBy,
+		Reason:    fmt.Sprintf("Product policy added for product %s", productID),
+	}
+
+	if err := s.policyStore.LogPolicyChange(ctx, change); err != nil {
+		fmt.Printf("Warning: failed to log policy change: %v\n", err)
+	}
+
+	return s.RefreshPolicies(ctx)
+}
+
+// ProductPolicy は商品固有のポリシー定義
+type ProductPolicy struct {
+	SubjectRule string `json:"subject_rule"`
+	Action      string `json:"action"`
+	AgeLimit    int    `json:"age_limit"`
+	Category    string `json:"category"`
+	IsAdult     bool   `json:"is_adult"`
+	Region      string `json:"region"`
+	VIPLevel    int    `json:"vip_level"`
 }
 
 // AddPolicy は新しいポリシーを追加

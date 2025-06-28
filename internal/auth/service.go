@@ -1,10 +1,12 @@
 package auth
 
 import (
+	"context"
 	"errors"
 	"time"
 
 	"authorization-demo/internal/model"
+	"authorization-demo/internal/service"
 
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -22,50 +24,21 @@ var (
 
 // Service は認証サービス
 type Service struct {
-	users map[string]*model.User // 簡易的なユーザーストア
+	userService service.UserService
 }
 
 // NewService は新しい認証サービスを作成
-func NewService() *Service {
-	// テスト用ユーザーを作成
-	users := map[string]*model.User{
-		"alice": {
-			ID:       "1",
-			Username: "alice",
-			Password: "password",
-			Role:     "admin",
-			Age:      30,
-		},
-		"bob": {
-			ID:       "2",
-			Username: "bob",
-			Password: "password",
-			Role:     "operator",
-			Age:      25,
-		},
-		"charlie": {
-			ID:       "3",
-			Username: "charlie",
-			Password: "password",
-			Role:     "customer",
-			Age:      17,
-		},
-		"dave": {
-			ID:       "4",
-			Username: "dave",
-			Password: "password",
-			Role:     "customer",
-			Age:      22,
-		},
-	}
-
-	return &Service{users: users}
+func NewService(userService service.UserService) *Service {
+	return &Service{userService: userService}
 }
 
 // Login はユーザー認証とJWTトークン生成を行う
 func (s *Service) Login(username, password string) (*model.LoginResponse, error) {
-	user, exists := s.users[username]
-	if !exists || user.Password != password {
+	ctx := context.Background()
+
+	// データベースからユーザーを認証
+	user, err := s.userService.ValidatePassword(ctx, username, password)
+	if err != nil {
 		return nil, ErrInvalidCredentials
 	}
 
@@ -75,13 +48,9 @@ func (s *Service) Login(username, password string) (*model.LoginResponse, error)
 		return nil, err
 	}
 
-	// パスワードを除去してレスポンスを作成
-	userResponse := *user
-	userResponse.Password = ""
-
 	return &model.LoginResponse{
 		Token: token,
-		User:  userResponse,
+		User:  *user,
 	}, nil
 }
 
@@ -106,6 +75,9 @@ func (s *Service) ValidateToken(tokenString string) (*model.User, error) {
 		Username: claims.Username,
 		Role:     claims.Role,
 		Age:      claims.Age,
+		Location: claims.Location,
+		Premium:  claims.Premium,
+		VIPLevel: claims.VIPLevel,
 	}
 
 	return user, nil
@@ -118,6 +90,9 @@ func (s *Service) generateJWT(user *model.User) (string, error) {
 		Username: user.Username,
 		Role:     user.Role,
 		Age:      user.Age,
+		Location: user.Location,
+		Premium:  user.Premium,
+		VIPLevel: user.VIPLevel,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

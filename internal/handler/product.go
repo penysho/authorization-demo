@@ -2,78 +2,153 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 
+	"authorization-demo/internal/middleware"
 	"authorization-demo/internal/model"
 	"authorization-demo/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
 
-// ProductHandler は商品ハンドラー
+// ProductHandler は商品のHTTPハンドラー
 type ProductHandler struct {
-	productService *service.ProductService
+	productService service.ProductService
+	authService    *service.AuthorizationService
 }
 
 // NewProductHandler は新しい商品ハンドラーを作成
-func NewProductHandler(productService *service.ProductService) *ProductHandler {
-	return &ProductHandler{productService: productService}
+func NewProductHandler(productService service.ProductService, authService *service.AuthorizationService) *ProductHandler {
+	return &ProductHandler{
+		productService: productService,
+		authService:    authService,
+	}
 }
 
-// GetProducts は商品一覧を取得
+// GetProducts は商品一覧を取得（ユーザーがアクセス可能な商品のみ）
 func (h *ProductHandler) GetProducts(c *gin.Context) {
-	products, err := h.productService.GetAllProducts()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get products"})
+	// コンテキストからユーザー情報を取得
+	user, exists := middleware.GetUserFromContext(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found in context"})
 		return
 	}
 
-	response := &model.ProductListResponse{
-		Products: make([]model.Product, len(products)),
+	// フィルタ条件を取得
+	filters := service.ProductFilters{
+		Category: c.Query("category"),
+		Region:   c.Query("region"),
+	}
+
+	// 価格フィルタ
+	if minPrice := c.Query("min_price"); minPrice != "" {
+		if price, err := strconv.ParseFloat(minPrice, 64); err == nil {
+			filters.MinPrice = price
+		}
+	}
+	if maxPrice := c.Query("max_price"); maxPrice != "" {
+		if price, err := strconv.ParseFloat(maxPrice, 64); err == nil {
+			filters.MaxPrice = price
+		}
+	}
+
+	// 成人向けコンテンツフィルタ
+	if onlyAdult := c.Query("only_adult"); onlyAdult == "true" {
+		adult := true
+		filters.OnlyAdult = &adult
+	}
+
+	// ユーザーがアクセス可能な商品を取得
+	products, err := h.productService.GetProductsForUser(c.Request.Context(), user, filters)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to get products",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, model.ProductListResponse{
+		Products: products,
 		Total:    len(products),
-	}
-
-	// ポインタを値にコピー
-	for i, product := range products {
-		response.Products[i] = *product
-	}
-
-	c.JSON(http.StatusOK, response)
+	})
 }
 
-// GetProduct は商品詳細を取得
+// GetProduct は指定された商品を取得
 func (h *ProductHandler) GetProduct(c *gin.Context) {
-	id := c.Param("id")
-
-	product, err := h.productService.GetProductByID(id)
-	if err != nil {
-		if err == service.ErrProductNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get product"})
+	// ミドルウェアで既にアクセス権限がチェック済み
+	// コンテキストから商品情報を取得
+	product, exists := middleware.GetProductFromContext(c)
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Product not found in context"})
 		return
 	}
 
 	c.JSON(http.StatusOK, product)
 }
 
-// UpdateProduct は商品を更新
-func (h *ProductHandler) UpdateProduct(c *gin.Context) {
-	id := c.Param("id")
-
+// CreateProduct は新しい商品を作成
+func (h *ProductHandler) CreateProduct(c *gin.Context) {
 	var req model.ProductRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid request body",
+			"details": err.Error(),
+		})
 		return
 	}
 
-	product, err := h.productService.UpdateProduct(id, &req)
+	// コンテキストからユーザー情報を取得
+	user, exists := middleware.GetUserFromContext(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found in context"})
+		return
+	}
+
+	// 商品を作成
+	product, err := h.productService.CreateProduct(c.Request.Context(), &req, user.ID)
 	if err != nil {
-		if err == service.ErrProductNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update product"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to create product",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, product)
+}
+
+// UpdateProduct は商品を更新
+func (h *ProductHandler) UpdateProduct(c *gin.Context) {
+	productID := c.Param("id")
+	if productID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Product ID is required"})
+		return
+	}
+
+	var req model.ProductRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid request body",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// コンテキストからユーザー情報を取得
+	user, exists := middleware.GetUserFromContext(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found in context"})
+		return
+	}
+
+	// 商品を更新
+	product, err := h.productService.UpdateProduct(c.Request.Context(), productID, &req, user.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to update product",
+			"details": err.Error(),
+		})
 		return
 	}
 
@@ -82,34 +157,122 @@ func (h *ProductHandler) UpdateProduct(c *gin.Context) {
 
 // DeleteProduct は商品を削除
 func (h *ProductHandler) DeleteProduct(c *gin.Context) {
-	id := c.Param("id")
+	productID := c.Param("id")
+	if productID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Product ID is required"})
+		return
+	}
 
-	err := h.productService.DeleteProduct(id)
-	if err != nil {
-		if err == service.ErrProductNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete product"})
+	// コンテキストからユーザー情報を取得
+	user, exists := middleware.GetUserFromContext(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found in context"})
+		return
+	}
+
+	// 商品を削除
+	if err := h.productService.DeleteProduct(c.Request.Context(), productID, user.ID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to delete product",
+			"details": err.Error(),
+		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Product deleted successfully"})
 }
 
-// CreateProduct は新しい商品を作成
-func (h *ProductHandler) CreateProduct(c *gin.Context) {
-	var req model.ProductRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+// SetProductPolicy は商品固有のポリシーを設定
+func (h *ProductHandler) SetProductPolicy(c *gin.Context) {
+	productID := c.Param("id")
+	if productID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Product ID is required"})
 		return
 	}
 
-	product, err := h.productService.CreateProduct(&req)
+	var policy service.ProductPolicy
+	if err := c.ShouldBindJSON(&policy); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid policy body",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// コンテキストからユーザー情報を取得
+	user, exists := middleware.GetUserFromContext(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found in context"})
+		return
+	}
+
+	// ポリシーを設定
+	if err := h.productService.SetProductPolicy(c.Request.Context(), productID, policy, user.ID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to set product policy",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Product policy set successfully"})
+}
+
+// GetProductPolicy は商品のポリシーを取得
+func (h *ProductHandler) GetProductPolicy(c *gin.Context) {
+	productID := c.Param("id")
+	if productID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Product ID is required"})
+		return
+	}
+
+	// ポリシーを取得
+	policy, err := h.productService.GetProductPolicy(c.Request.Context(), productID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create product"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to get product policy",
+			"details": err.Error(),
+		})
 		return
 	}
 
-	c.JSON(http.StatusCreated, product)
+	c.JSON(http.StatusOK, policy)
+}
+
+// CheckProductAccess は商品アクセス権限をチェック
+func (h *ProductHandler) CheckProductAccess(c *gin.Context) {
+	productID := c.Param("id")
+	action := c.Query("action")
+
+	if productID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Product ID is required"})
+		return
+	}
+	if action == "" {
+		action = "read" // デフォルトアクション
+	}
+
+	// コンテキストからユーザー情報を取得
+	user, exists := middleware.GetUserFromContext(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found in context"})
+		return
+	}
+
+	// アクセス権限をチェック
+	allowed, err := h.productService.CheckProductAccess(c.Request.Context(), user.ID, productID, action)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Access check failed",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"product_id": productID,
+		"action":     action,
+		"allowed":    allowed,
+		"user_id":    user.ID,
+	})
 }
