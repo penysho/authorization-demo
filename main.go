@@ -8,7 +8,6 @@ import (
 	"os"
 	"strings"
 
-	"authorization-demo/internal/auth"
 	"authorization-demo/internal/handler"
 	"authorization-demo/internal/infrastructure"
 	"authorization-demo/internal/middleware"
@@ -39,7 +38,7 @@ func main() {
 
 	// Initialize services
 	userService := service.NewUserService(db)
-	authService := auth.NewService(userService)
+	authService := service.NewAuthenticationService(userService)
 
 	// Choose policy store implementation
 	// For development with database:

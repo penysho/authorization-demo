@@ -3,19 +3,19 @@ package handler
 import (
 	"net/http"
 
-	"authorization-demo/internal/auth"
 	"authorization-demo/internal/model"
+	"authorization-demo/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
 
 // AuthHandler は認証ハンドラー
 type AuthHandler struct {
-	authService *auth.Service
+	authService *service.AuthenticationService
 }
 
 // NewAuthHandler は新しい認証ハンドラーを作成
-func NewAuthHandler(authService *auth.Service) *AuthHandler {
+func NewAuthHandler(authService *service.AuthenticationService) *AuthHandler {
 	return &AuthHandler{authService: authService}
 }
 
@@ -29,7 +29,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	response, err := h.authService.Login(req.Username, req.Password)
 	if err != nil {
-		if err == auth.ErrInvalidCredentials {
+		if err == service.ErrInvalidCredentials {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
 			return
 		}

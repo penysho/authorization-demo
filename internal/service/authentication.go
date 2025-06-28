@@ -1,4 +1,4 @@
-package auth
+package service
 
 import (
 	"context"
@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"authorization-demo/internal/model"
-	"authorization-demo/internal/service"
 
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -23,17 +22,17 @@ var (
 )
 
 // Service は認証サービス
-type Service struct {
-	userService service.UserService
+type AuthenticationService struct {
+	userService UserService
 }
 
 // NewService は新しい認証サービスを作成
-func NewService(userService service.UserService) *Service {
-	return &Service{userService: userService}
+func NewAuthenticationService(userService UserService) *AuthenticationService {
+	return &AuthenticationService{userService: userService}
 }
 
 // Login はユーザー認証とJWTトークン生成を行う
-func (s *Service) Login(username, password string) (*model.LoginResponse, error) {
+func (s *AuthenticationService) Login(username, password string) (*model.LoginResponse, error) {
 	ctx := context.Background()
 
 	// データベースからユーザーを認証
@@ -55,7 +54,7 @@ func (s *Service) Login(username, password string) (*model.LoginResponse, error)
 }
 
 // ValidateToken はJWTトークンを検証してユーザー情報を返す
-func (s *Service) ValidateToken(tokenString string) (*model.User, error) {
+func (s *AuthenticationService) ValidateToken(tokenString string) (*model.User, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &model.JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
 		return JWTSecret, nil
 	})
@@ -84,7 +83,7 @@ func (s *Service) ValidateToken(tokenString string) (*model.User, error) {
 }
 
 // generateJWT はJWTトークンを生成
-func (s *Service) generateJWT(user *model.User) (string, error) {
+func (s *AuthenticationService) generateJWT(user *model.User) (string, error) {
 	claims := &model.JWTClaims{
 		UserID:   user.ID,
 		Username: user.Username,

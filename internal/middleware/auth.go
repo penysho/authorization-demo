@@ -4,14 +4,14 @@ import (
 	"net/http"
 	"strings"
 
-	"authorization-demo/internal/auth"
 	"authorization-demo/internal/model"
+	"authorization-demo/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
 
 // AuthMiddleware はJWT認証ミドルウェア
-func AuthMiddleware(authService *auth.Service) gin.HandlerFunc {
+func AuthMiddleware(authService *service.AuthenticationService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
