@@ -45,15 +45,11 @@ func main() {
 	userService := service.NewUserService(db)
 	authService := service.NewAuthenticationService(userService)
 
-	// Choose policy store implementation
-	// For development with database:
-	policyStore := service.NewDatabasePolicyStore(db)
-
-	// Initialize policy engine
-	policyEngine := service.NewPolicyEngine(db)
+	casbinPolicyStore := service.NewCasbinDatabasePolicyStore(db)
+	structuredPolicyEngine := service.NewPolicyEngine(db)
 
 	// Initialize authorization service
-	authzService, err := service.NewAuthorizationService(policyStore, policyEngine)
+	authzService, err := service.NewAuthorizationService(casbinPolicyStore, structuredPolicyEngine)
 	if err != nil {
 		log.Fatalf("Failed to initialize authorization service: %v", err)
 	}
@@ -73,15 +69,15 @@ func main() {
 	}
 
 	// 初期ポリシーの設定
-	if err := setupInitialPolicies(policyStore, userService, sampleProducts); err != nil {
+	if err := setupInitialPolicies(casbinPolicyStore, userService, sampleProducts); err != nil {
 		log.Fatalf("Failed to setup initial policies: %v", err)
 	}
 
 	// Initialize handlers
 	authHandler := handler.NewAuthHandler(authService)
 	productHandler := handler.NewProductHandler(productService, authzService)
-	policyHandler := handler.NewPolicyHandler(authzService)
-	policyAdminHandler := handler.NewPolicyAdminHandler(policyEngine)
+	casbinPolicyHandler := handler.NewCasbinPolicyHandler(authzService)
+	structuredPolicyHandler := handler.NewStructuredPolicyHandler(structuredPolicyEngine)
 
 	// Setup Gin router
 	r := gin.Default()
@@ -124,47 +120,47 @@ func main() {
 		middleware.RequirePermission(authzService, "products", "write"),
 		productHandler.CreateProduct)
 
-	// Product policy management routes
-	api.POST("/products/:id/policy",
+	// Casbin policy management routes (admin only)
+	casbinAPI := api.Group("/casbin")
+	casbinAPI.POST("/products/:id",
 		middleware.RequirePermission(authzService, "policies", "admin"),
 		productHandler.SetProductPolicy)
-	api.GET("/products/:id/policy",
+	casbinAPI.GET("/products/:id",
 		middleware.RequirePermission(authzService, "policies", "admin"),
 		productHandler.GetProductPolicy)
-	api.GET("/products/:id/access",
+	casbinAPI.GET("/products/:id/access",
 		middleware.RequireBulkProductAccess(authzService, "read"),
 		productHandler.CheckProductAccess)
+	casbinAPI.POST("/policies",
+		middleware.RequirePermission(authzService, "policies", "admin"),
+		casbinPolicyHandler.CreatePolicy)
+	casbinAPI.POST("/roles/assign",
+		middleware.RequirePermission(authzService, "policies", "admin"),
+		casbinPolicyHandler.AssignRole)
+	casbinAPI.GET("/audit-log",
+		middleware.RequirePermission(authzService, "policies", "admin"),
+		casbinPolicyHandler.GetAuditLog)
 
-	// Policy management routes (admin only)
-	api.POST("/policies",
+	// Structured policy management routes (admin only)
+	structuredAPI := api.Group("/structured-policy")
+	structuredAPI.POST("/products/:id",
 		middleware.RequirePermission(authzService, "policies", "admin"),
-		policyHandler.CreatePolicy)
-	api.POST("/roles/assign",
+		structuredPolicyHandler.CreateProductPolicy)
+	structuredAPI.GET("/products/:id",
 		middleware.RequirePermission(authzService, "policies", "admin"),
-		policyHandler.AssignRole)
-	api.GET("/audit-log",
+		structuredPolicyHandler.GetProductPolicy)
+	structuredAPI.POST("/test",
 		middleware.RequirePermission(authzService, "policies", "admin"),
-		policyHandler.GetAuditLog)
-
-	// Policy admin routes (structured policy management)
-	api.POST("/products/:id/structured-policy",
+		structuredPolicyHandler.TestPolicy)
+	structuredAPI.GET("/templates",
 		middleware.RequirePermission(authzService, "policies", "admin"),
-		policyAdminHandler.CreateProductPolicy)
-	api.GET("/products/:id/structured-policy",
+		structuredPolicyHandler.GetPolicyTemplates)
+	structuredAPI.GET("/operators",
 		middleware.RequirePermission(authzService, "policies", "admin"),
-		policyAdminHandler.GetProductPolicy)
-	api.POST("/policy/test",
+		structuredPolicyHandler.GetOperators)
+	structuredAPI.GET("/attributes",
 		middleware.RequirePermission(authzService, "policies", "admin"),
-		policyAdminHandler.TestPolicy)
-	api.GET("/policy/templates",
-		middleware.RequirePermission(authzService, "policies", "admin"),
-		policyAdminHandler.GetPolicyTemplates)
-	api.GET("/policy/operators",
-		middleware.RequirePermission(authzService, "policies", "admin"),
-		policyAdminHandler.GetOperators)
-	api.GET("/policy/attributes",
-		middleware.RequirePermission(authzService, "policies", "admin"),
-		policyAdminHandler.GetAttributes)
+		structuredPolicyHandler.GetAttributes)
 
 	// Authorization metrics routes (admin/manager only)
 	api.GET("/authorization/metrics",
@@ -197,10 +193,10 @@ func main() {
 	r.GET("/", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"message":     "Enhanced ABAC Authorization Demo API",
-			"version":     "2.0.0",
+			"version":     "2.1.0",
 			"description": "ECアプリケーションでの商品閲覧制御デモ - ABACによる年齢制限・地域制限・VIPレベル制御",
 			"features": gin.H{
-				"rbac":                 "Role-Based Access Control",
+				"rbac":                 "Role-Based Access Control (Casbin)",
 				"abac":                 "Attribute-Based Access Control with age/region/VIP restrictions",
 				"age_restrictions":     "Age-based product access control",
 				"region_restrictions":  "Geographic access restrictions",
@@ -224,10 +220,18 @@ func main() {
 					"get_policy":   "GET /api/products/:id/policy",
 					"check_access": "GET /api/products/:id/access",
 				},
-				"policies": gin.H{
-					"create":      "POST /api/policies",
-					"assign_role": "POST /api/roles/assign",
-					"audit_log":   "GET /api/audit-log",
+				"casbin_policies": gin.H{
+					"create":      "POST /api/casbin/policies",
+					"assign_role": "POST /api/casbin/roles/assign",
+					"audit_log":   "GET /api/casbin/audit-log",
+				},
+				"structured_policies": gin.H{
+					"create_product_policy": "POST /api/structured-policy/products/:id",
+					"get_product_policy":    "GET /api/structured-policy/products/:id",
+					"test_policy":           "POST /api/structured-policy/test",
+					"templates":             "GET /api/structured-policy/templates",
+					"operators":             "GET /api/structured-policy/operators",
+					"attributes":            "GET /api/structured-policy/attributes",
 				},
 				"authorization": gin.H{
 					"metrics":       "GET /api/authorization/metrics",
@@ -547,7 +551,7 @@ func setupSampleData(db *gorm.DB, productService service.ProductService) ([]*mod
 }
 
 // setupInitialPolicies は初期ポリシーを設定
-func setupInitialPolicies(store service.PolicyStore, userService service.UserService, sampleProducts []*model.Product) error {
+func setupInitialPolicies(store service.CasbinPolicyStore, userService service.UserService, sampleProducts []*model.Product) error {
 	ctx := context.Background()
 
 	// RBAC policies

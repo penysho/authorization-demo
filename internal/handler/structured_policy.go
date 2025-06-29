@@ -11,14 +11,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// PolicyAdminHandler は管理画面用のポリシー管理ハンドラー
-type PolicyAdminHandler struct {
+// StructuredPolicyHandler は構造化ポリシーエンジンのための管理画面用ハンドラー
+type StructuredPolicyHandler struct {
 	policyEngine *service.PolicyEngine
 }
 
-// NewPolicyAdminHandler creates a new policy admin handler
-func NewPolicyAdminHandler(policyEngine *service.PolicyEngine) *PolicyAdminHandler {
-	return &PolicyAdminHandler{
+// NewStructuredPolicyHandler creates a new structured policy handler
+func NewStructuredPolicyHandler(policyEngine *service.PolicyEngine) *StructuredPolicyHandler {
+	return &StructuredPolicyHandler{
 		policyEngine: policyEngine,
 	}
 }
@@ -62,7 +62,7 @@ type TimeRestrictionRequest struct {
 }
 
 // CreateProductPolicy は商品のポリシーを作成/更新
-func (h *PolicyAdminHandler) CreateProductPolicy(c *gin.Context) {
+func (h *StructuredPolicyHandler) CreateProductPolicy(c *gin.Context) {
 	productID := c.Param("id")
 	if productID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Product ID is required"})
@@ -164,7 +164,7 @@ func (h *PolicyAdminHandler) CreateProductPolicy(c *gin.Context) {
 }
 
 // GetProductPolicy は商品のポリシーを取得
-func (h *PolicyAdminHandler) GetProductPolicy(c *gin.Context) {
+func (h *StructuredPolicyHandler) GetProductPolicy(c *gin.Context) {
 	productID := c.Param("id")
 	if productID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Product ID is required"})
@@ -184,7 +184,7 @@ func (h *PolicyAdminHandler) GetProductPolicy(c *gin.Context) {
 }
 
 // TestPolicy は指定されたユーザーとポリシーでアクセス可否をテスト
-func (h *PolicyAdminHandler) TestPolicy(c *gin.Context) {
+func (h *StructuredPolicyHandler) TestPolicy(c *gin.Context) {
 	var req struct {
 		UserID    string               `json:"user_id" binding:"required"`
 		ProductID string               `json:"product_id" binding:"required"`
@@ -209,7 +209,7 @@ func (h *PolicyAdminHandler) TestPolicy(c *gin.Context) {
 }
 
 // GetPolicyTemplates は利用可能なポリシーテンプレートを返す
-func (h *PolicyAdminHandler) GetPolicyTemplates(c *gin.Context) {
+func (h *StructuredPolicyHandler) GetPolicyTemplates(c *gin.Context) {
 	templates := []gin.H{
 		{
 			"id":          "age_restriction",
@@ -296,7 +296,7 @@ func (h *PolicyAdminHandler) GetPolicyTemplates(c *gin.Context) {
 }
 
 // GetOperators は利用可能な演算子を返す
-func (h *PolicyAdminHandler) GetOperators(c *gin.Context) {
+func (h *StructuredPolicyHandler) GetOperators(c *gin.Context) {
 	operators := gin.H{
 		"numeric": []gin.H{
 			{"value": "==", "label": "等しい"},
@@ -322,7 +322,7 @@ func (h *PolicyAdminHandler) GetOperators(c *gin.Context) {
 }
 
 // GetAttributes は利用可能な属性を返す
-func (h *PolicyAdminHandler) GetAttributes(c *gin.Context) {
+func (h *StructuredPolicyHandler) GetAttributes(c *gin.Context) {
 	attributes := []gin.H{
 		{
 			"name":        "age",

@@ -83,8 +83,11 @@ func ConnectDatabase(config *DatabaseConfig) (*gorm.DB, error) {
 
 // MigratePolicyStoreSchema performs database migration for policy store
 func MigratePolicyStoreSchema(db *gorm.DB) error {
-	store := service.NewDatabasePolicyStore(db)
-	return store.AutoMigrate()
+	return db.AutoMigrate(
+		&service.CasbinPolicyRuleDB{},
+		&service.CasbinRoleAssignmentDB{},
+		&service.PolicyChangeDB{},
+	)
 }
 
 // MigratePolicyEngineSchema migrates policy engine tables

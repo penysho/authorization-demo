@@ -9,8 +9,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// PolicyStore は認可ポリシーの永続化を抽象化するインターフェース
-type PolicyStore interface {
+// CasbinPolicyStore は認可ポリシーの永続化を抽象化するインターフェース
+type CasbinPolicyStore interface {
 	// ポリシーの基本操作
 	LoadPolicies(ctx context.Context) ([]PolicyRule, error)
 	SavePolicy(ctx context.Context, rule PolicyRule) error
@@ -60,7 +60,7 @@ type PolicyChange struct {
 }
 
 // Database models for GORM
-type PolicyRuleDB struct {
+type CasbinPolicyRuleDB struct {
 	ID        string    `gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
 	Type      string    `gorm:"not null;index"`
 	Subject   string    `gorm:"not null;index"`
@@ -73,11 +73,11 @@ type PolicyRuleDB struct {
 	CreatedBy string    `gorm:"not null"`
 }
 
-func (PolicyRuleDB) TableName() string {
-	return "policy_rules"
+func (CasbinPolicyRuleDB) TableName() string {
+	return "casbin_policy_rules"
 }
 
-type RoleAssignmentDB struct {
+type CasbinRoleAssignmentDB struct {
 	ID        uint      `gorm:"primaryKey"`
 	UserID    string    `gorm:"not null;index"`
 	Role      string    `gorm:"not null;index"`
@@ -85,10 +85,12 @@ type RoleAssignmentDB struct {
 	CreatedBy string    `gorm:"not null"`
 }
 
-func (RoleAssignmentDB) TableName() string {
-	return "role_assignments"
+func (CasbinRoleAssignmentDB) TableName() string {
+	return "casbin_role_assignments"
 }
 
+// PolicyChangeDB is the database model for policy changes
+// This is not dependent on Casbin.
 type PolicyChangeDB struct {
 	ID        string    `gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
 	Type      string    `gorm:"not null;index"`
@@ -103,28 +105,19 @@ func (PolicyChangeDB) TableName() string {
 	return "policy_changes"
 }
 
-// DatabasePolicyStore はデータベースベースのポリシーストア実装
-type DatabasePolicyStore struct {
+// CasbinDatabasePolicyStore はデータベースベースのポリシーストア実装
+type CasbinDatabasePolicyStore struct {
 	db *gorm.DB
 }
 
-// NewDatabasePolicyStore creates a new database-backed policy store
-func NewDatabasePolicyStore(db *gorm.DB) *DatabasePolicyStore {
-	return &DatabasePolicyStore{db: db}
-}
-
-// AutoMigrate performs database migration for policy store tables
-func (s *DatabasePolicyStore) AutoMigrate() error {
-	return s.db.AutoMigrate(
-		&PolicyRuleDB{},
-		&RoleAssignmentDB{},
-		&PolicyChangeDB{},
-	)
+// NewCasbinDatabasePolicyStore creates a new database-backed policy store
+func NewCasbinDatabasePolicyStore(db *gorm.DB) *CasbinDatabasePolicyStore {
+	return &CasbinDatabasePolicyStore{db: db}
 }
 
 // Helper functions to convert between models
-func (s *DatabasePolicyStore) policyRuleToDB(rule PolicyRule) (*PolicyRuleDB, error) {
-	return &PolicyRuleDB{
+func (s *CasbinDatabasePolicyStore) policyRuleToDB(rule PolicyRule) (*CasbinPolicyRuleDB, error) {
+	return &CasbinPolicyRuleDB{
 		ID:        rule.ID,
 		Type:      rule.Type,
 		Subject:   rule.Subject,
@@ -138,7 +131,7 @@ func (s *DatabasePolicyStore) policyRuleToDB(rule PolicyRule) (*PolicyRuleDB, er
 	}, nil
 }
 
-func (s *DatabasePolicyStore) policyRuleFromDB(dbRule PolicyRuleDB) (PolicyRule, error) {
+func (s *CasbinDatabasePolicyStore) policyRuleFromDB(dbRule CasbinPolicyRuleDB) (PolicyRule, error) {
 	return PolicyRule{
 		ID:        dbRule.ID,
 		Type:      dbRule.Type,
@@ -153,8 +146,8 @@ func (s *DatabasePolicyStore) policyRuleFromDB(dbRule PolicyRuleDB) (PolicyRule,
 	}, nil
 }
 
-func (s *DatabasePolicyStore) roleAssignmentToDB(assignment RoleAssignment) RoleAssignmentDB {
-	return RoleAssignmentDB{
+func (s *CasbinDatabasePolicyStore) roleAssignmentToDB(assignment RoleAssignment) CasbinRoleAssignmentDB {
+	return CasbinRoleAssignmentDB{
 		UserID:    assignment.UserID,
 		Role:      assignment.Role,
 		CreatedAt: assignment.CreatedAt,
@@ -162,7 +155,7 @@ func (s *DatabasePolicyStore) roleAssignmentToDB(assignment RoleAssignment) Role
 	}
 }
 
-func (s *DatabasePolicyStore) roleAssignmentFromDB(dbAssignment RoleAssignmentDB) RoleAssignment {
+func (s *CasbinDatabasePolicyStore) roleAssignmentFromDB(dbAssignment CasbinRoleAssignmentDB) RoleAssignment {
 	return RoleAssignment{
 		UserID:    dbAssignment.UserID,
 		Role:      dbAssignment.Role,
@@ -171,7 +164,7 @@ func (s *DatabasePolicyStore) roleAssignmentFromDB(dbAssignment RoleAssignmentDB
 	}
 }
 
-func (s *DatabasePolicyStore) policyChangeToDB(change PolicyChange) (*PolicyChangeDB, error) {
+func (s *CasbinDatabasePolicyStore) policyChangeToDB(change PolicyChange) (*PolicyChangeDB, error) {
 	var beforeJSON, afterJSON *string
 
 	if change.Before != nil {
@@ -203,7 +196,7 @@ func (s *DatabasePolicyStore) policyChangeToDB(change PolicyChange) (*PolicyChan
 	}, nil
 }
 
-func (s *DatabasePolicyStore) policyChangeFromDB(dbChange PolicyChangeDB) (PolicyChange, error) {
+func (s *CasbinDatabasePolicyStore) policyChangeFromDB(dbChange PolicyChangeDB) (PolicyChange, error) {
 	var before, after interface{}
 
 	if dbChange.Before != nil && *dbChange.Before != "" {
@@ -232,8 +225,8 @@ func (s *DatabasePolicyStore) policyChangeFromDB(dbChange PolicyChangeDB) (Polic
 }
 
 // DatabasePolicyStore implementations
-func (s *DatabasePolicyStore) LoadPolicies(ctx context.Context) ([]PolicyRule, error) {
-	var dbRules []PolicyRuleDB
+func (s *CasbinDatabasePolicyStore) LoadPolicies(ctx context.Context) ([]PolicyRule, error) {
+	var dbRules []CasbinPolicyRuleDB
 	if err := s.db.WithContext(ctx).Find(&dbRules).Error; err != nil {
 		return nil, fmt.Errorf("failed to load policies from database: %w", err)
 	}
@@ -250,7 +243,7 @@ func (s *DatabasePolicyStore) LoadPolicies(ctx context.Context) ([]PolicyRule, e
 	return rules, nil
 }
 
-func (s *DatabasePolicyStore) SavePolicy(ctx context.Context, rule PolicyRule) error {
+func (s *CasbinDatabasePolicyStore) SavePolicy(ctx context.Context, rule PolicyRule) error {
 	dbRule, err := s.policyRuleToDB(rule)
 	if err != nil {
 		return fmt.Errorf("failed to convert policy rule for database: %w", err)
@@ -275,8 +268,8 @@ func (s *DatabasePolicyStore) SavePolicy(ctx context.Context, rule PolicyRule) e
 	return nil
 }
 
-func (s *DatabasePolicyStore) DeletePolicy(ctx context.Context, rule PolicyRule) error {
-	result := s.db.WithContext(ctx).Where("id = ?", rule.ID).Delete(&PolicyRuleDB{})
+func (s *CasbinDatabasePolicyStore) DeletePolicy(ctx context.Context, rule PolicyRule) error {
+	result := s.db.WithContext(ctx).Where("id = ?", rule.ID).Delete(&CasbinPolicyRuleDB{})
 	if result.Error != nil {
 		return fmt.Errorf("failed to delete policy from database: %w", result.Error)
 	}
@@ -288,8 +281,8 @@ func (s *DatabasePolicyStore) DeletePolicy(ctx context.Context, rule PolicyRule)
 	return nil
 }
 
-func (s *DatabasePolicyStore) LoadRoles(ctx context.Context) ([]RoleAssignment, error) {
-	var dbAssignments []RoleAssignmentDB
+func (s *CasbinDatabasePolicyStore) LoadRoles(ctx context.Context) ([]RoleAssignment, error) {
+	var dbAssignments []CasbinRoleAssignmentDB
 	if err := s.db.WithContext(ctx).Find(&dbAssignments).Error; err != nil {
 		return nil, fmt.Errorf("failed to load roles from database: %w", err)
 	}
@@ -302,10 +295,10 @@ func (s *DatabasePolicyStore) LoadRoles(ctx context.Context) ([]RoleAssignment, 
 	return assignments, nil
 }
 
-func (s *DatabasePolicyStore) AssignRole(ctx context.Context, userID, role string) error {
+func (s *CasbinDatabasePolicyStore) AssignRole(ctx context.Context, userID, role string) error {
 	// Check if assignment already exists
 	var count int64
-	err := s.db.WithContext(ctx).Model(&RoleAssignmentDB{}).
+	err := s.db.WithContext(ctx).Model(&CasbinRoleAssignmentDB{}).
 		Where("user_id = ? AND role = ?", userID, role).
 		Count(&count).Error
 
@@ -317,7 +310,7 @@ func (s *DatabasePolicyStore) AssignRole(ctx context.Context, userID, role strin
 		return fmt.Errorf("role assignment already exists: %s -> %s", userID, role)
 	}
 
-	assignment := RoleAssignmentDB{
+	assignment := CasbinRoleAssignmentDB{
 		UserID:    userID,
 		Role:      role,
 		CreatedAt: time.Now(),
@@ -331,10 +324,10 @@ func (s *DatabasePolicyStore) AssignRole(ctx context.Context, userID, role strin
 	return nil
 }
 
-func (s *DatabasePolicyStore) RevokeRole(ctx context.Context, userID, role string) error {
+func (s *CasbinDatabasePolicyStore) RevokeRole(ctx context.Context, userID, role string) error {
 	result := s.db.WithContext(ctx).
 		Where("user_id = ? AND role = ?", userID, role).
-		Delete(&RoleAssignmentDB{})
+		Delete(&CasbinRoleAssignmentDB{})
 
 	if result.Error != nil {
 		return fmt.Errorf("failed to revoke role from database: %w", result.Error)
@@ -347,7 +340,7 @@ func (s *DatabasePolicyStore) RevokeRole(ctx context.Context, userID, role strin
 	return nil
 }
 
-func (s *DatabasePolicyStore) LogPolicyChange(ctx context.Context, change PolicyChange) error {
+func (s *CasbinDatabasePolicyStore) LogPolicyChange(ctx context.Context, change PolicyChange) error {
 	dbChange, err := s.policyChangeToDB(change)
 	if err != nil {
 		return fmt.Errorf("failed to convert policy change for database: %w", err)
@@ -365,7 +358,7 @@ func (s *DatabasePolicyStore) LogPolicyChange(ctx context.Context, change Policy
 	return nil
 }
 
-func (s *DatabasePolicyStore) GetAuditLog(ctx context.Context, from, to time.Time) ([]PolicyChange, error) {
+func (s *CasbinDatabasePolicyStore) GetAuditLog(ctx context.Context, from, to time.Time) ([]PolicyChange, error) {
 	var dbChanges []PolicyChangeDB
 
 	query := s.db.WithContext(ctx).Model(&PolicyChangeDB{})

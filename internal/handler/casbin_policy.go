@@ -9,14 +9,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// PolicyHandler はポリシー管理のためのHTTPハンドラー
-type PolicyHandler struct {
+// CasbinPolicyHandler はCasbinを使用したポリシー管理のためのHTTPハンドラー
+type CasbinPolicyHandler struct {
 	authzService *service.AuthorizationService
 }
 
-// NewPolicyHandler creates a new policy handler
-func NewPolicyHandler(authzService *service.AuthorizationService) *PolicyHandler {
-	return &PolicyHandler{
+// NewCasbinPolicyHandler creates a new casbin policy handler
+func NewCasbinPolicyHandler(authzService *service.AuthorizationService) *CasbinPolicyHandler {
+	return &CasbinPolicyHandler{
 		authzService: authzService,
 	}
 }
@@ -42,7 +42,7 @@ type PolicyTemplateRequest struct {
 }
 
 // CreatePolicy は新しいポリシーを作成
-func (h *PolicyHandler) CreatePolicy(c *gin.Context) {
+func (h *CasbinPolicyHandler) CreatePolicy(c *gin.Context) {
 	var req CreatePolicyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -87,7 +87,7 @@ func (h *PolicyHandler) CreatePolicy(c *gin.Context) {
 }
 
 // DeletePolicy はポリシーを削除
-func (h *PolicyHandler) DeletePolicy(c *gin.Context) {
+func (h *CasbinPolicyHandler) DeletePolicy(c *gin.Context) {
 	policyID := c.Param("id")
 	if policyID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -116,7 +116,7 @@ func (h *PolicyHandler) DeletePolicy(c *gin.Context) {
 }
 
 // AssignRole はユーザーにロールを割り当て
-func (h *PolicyHandler) AssignRole(c *gin.Context) {
+func (h *CasbinPolicyHandler) AssignRole(c *gin.Context) {
 	var req AssignRoleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -150,7 +150,7 @@ func (h *PolicyHandler) AssignRole(c *gin.Context) {
 }
 
 // GetAuditLog は監査ログを取得
-func (h *PolicyHandler) GetAuditLog(c *gin.Context) {
+func (h *CasbinPolicyHandler) GetAuditLog(c *gin.Context) {
 	// クエリパラメータから期間を取得
 	fromStr := c.Query("from")
 	toStr := c.Query("to")
@@ -203,7 +203,7 @@ func (h *PolicyHandler) GetAuditLog(c *gin.Context) {
 }
 
 // GetPolicyStats はポリシーの統計情報を取得
-func (h *PolicyHandler) GetPolicyStats(c *gin.Context) {
+func (h *CasbinPolicyHandler) GetPolicyStats(c *gin.Context) {
 	stats, err := h.authzService.GetPolicyStats(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -219,7 +219,7 @@ func (h *PolicyHandler) GetPolicyStats(c *gin.Context) {
 }
 
 // RefreshPolicies はポリシーキャッシュを手動でリフレッシュ
-func (h *PolicyHandler) RefreshPolicies(c *gin.Context) {
+func (h *CasbinPolicyHandler) RefreshPolicies(c *gin.Context) {
 	err := h.authzService.RefreshPolicies(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -235,7 +235,7 @@ func (h *PolicyHandler) RefreshPolicies(c *gin.Context) {
 }
 
 // ValidatePolicy はポリシーの妥当性を検証
-func (h *PolicyHandler) ValidatePolicy(c *gin.Context) {
+func (h *CasbinPolicyHandler) ValidatePolicy(c *gin.Context) {
 	var rule service.PolicyRule
 	if err := c.ShouldBindJSON(&rule); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{

@@ -12,66 +12,24 @@ import (
 	"github.com/casbin/casbin/v2"
 )
 
-// カスタム関数: 文字列に部分文字列が含まれているかチェック
-func stringContainsFunc(args ...interface{}) (interface{}, error) {
-	if len(args) != 2 {
-		return false, fmt.Errorf("stringContains requires exactly 2 arguments")
-	}
-
-	str, ok := args[0].(string)
-	if !ok {
-		return false, fmt.Errorf("first argument must be a string")
-	}
-
-	substr, ok := args[1].(string)
-	if !ok {
-		return false, fmt.Errorf("second argument must be a string")
-	}
-
-	return strings.Contains(str, substr), nil
+// AuthorizationConfig holds configuration for the authorization service
+type AuthorizationConfig struct {
+	ABACEngineType        ABACEngineType `json:"abac_engine_type"`
+	RBACConfigPath        string         `json:"rbac_config_path"`
+	ABACConfigPath        string         `json:"abac_config_path"`
+	PolicyRefreshInterval time.Duration  `json:"policy_refresh_interval"`
+	PermissionCacheTTL    time.Duration  `json:"permission_cache_ttl"`
 }
 
-// カスタム関数: 配列やカンマ区切り文字列に値が含まれているかチェック
-func containsFunc(args ...interface{}) (interface{}, error) {
-	if len(args) != 2 {
-		return false, fmt.Errorf("contains requires exactly 2 arguments")
+// DefaultAuthorizationConfig returns default configuration
+func DefaultAuthorizationConfig() *AuthorizationConfig {
+	return &AuthorizationConfig{
+		ABACEngineType:        ABACEngineTypeCasbin, // Default to Casbin for backward compatibility
+		RBACConfigPath:        "config/rbac_model.conf",
+		ABACConfigPath:        "config/abac_model.conf",
+		PolicyRefreshInterval: 10 * time.Minute,
+		PermissionCacheTTL:    5 * time.Minute,
 	}
-
-	// 第一引数: 配列またはカンマ区切り文字列
-	container := args[0]
-	target := args[1]
-
-	// ターゲットを文字列に変換
-	targetStr, ok := target.(string)
-	if !ok {
-		return false, fmt.Errorf("second argument must be a string")
-	}
-
-	// コンテナが文字列の場合（カンマ区切り）
-	if containerStr, ok := container.(string); ok {
-		if containerStr == "" {
-			return false, nil
-		}
-		parts := strings.Split(containerStr, ",")
-		for _, part := range parts {
-			if strings.TrimSpace(part) == targetStr {
-				return true, nil
-			}
-		}
-		return false, nil
-	}
-
-	// コンテナが配列の場合
-	if containerSlice, ok := container.([]interface{}); ok {
-		for _, item := range containerSlice {
-			if itemStr, ok := item.(string); ok && itemStr == targetStr {
-				return true, nil
-			}
-		}
-		return false, nil
-	}
-
-	return false, fmt.Errorf("first argument must be a string or array")
 }
 
 // PermissionCache represents a cache entry for permission checks
@@ -98,10 +56,10 @@ type AuthorizationMetrics struct {
 
 // AuthorizationService は認可サービス
 type AuthorizationService struct {
-	policyStore  PolicyStore
-	rbacEnforcer *casbin.Enforcer
-	abacEnforcer *casbin.Enforcer
-	policyEngine *PolicyEngine // 新しい構造化ポリシーエンジン
+	casbinPolicyStore CasbinPolicyStore
+	rbacEnforcer      *casbin.Enforcer
+	abacEngine        ABACEngine // ABAC engine (Casbin or Structured Policy)
+	config            *AuthorizationConfig
 
 	// キャッシュ機能
 	lastPolicyRefreshTime time.Time     // ポリシー最終更新時刻
@@ -114,29 +72,47 @@ type AuthorizationService struct {
 }
 
 // NewAuthorizationService creates a new authorization service
-func NewAuthorizationService(policyStore PolicyStore, policyEngine *PolicyEngine) (*AuthorizationService, error) {
-	// Casbinエンフォーサーの初期化
-	rbacEnforcer, err := casbin.NewEnforcer("config/rbac_model.conf")
+func NewAuthorizationService(casbinPolicyStore CasbinPolicyStore, policyEngine *PolicyEngine) (*AuthorizationService, error) {
+	return NewAuthorizationServiceWithConfig(casbinPolicyStore, policyEngine, DefaultAuthorizationConfig())
+}
+
+// NewAuthorizationServiceWithConfig creates a new authorization service with custom configuration
+func NewAuthorizationServiceWithConfig(casbinPolicyStore CasbinPolicyStore, policyEngine *PolicyEngine, config *AuthorizationConfig) (*AuthorizationService, error) {
+	// RBACエンフォーサーの初期化
+	rbacEnforcer, err := casbin.NewEnforcer(config.RBACConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize RBAC enforcer: %w", err)
 	}
 
-	abacEnforcer, err := casbin.NewEnforcer("config/abac_model.conf")
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize ABAC enforcer: %w", err)
+	// ABACエンジンの初期化
+	var abacEngine ABACEngine
+	switch config.ABACEngineType {
+	case ABACEngineTypeCasbin:
+		abacEngine, err = NewCasbinABACEngine(config.ABACConfigPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize Casbin ABAC engine: %w", err)
+		}
+	case ABACEngineTypeStructured:
+		if policyEngine == nil {
+			return nil, fmt.Errorf("structured policy engine is required but not provided")
+		}
+		abacEngine = NewStructuredPolicyABACEngine(policyEngine)
+	default:
+		return nil, fmt.Errorf("unsupported ABAC engine type: %s", config.ABACEngineType)
 	}
 
-	// カスタム関数を追加
-	abacEnforcer.AddFunction("contains", containsFunc)
-	abacEnforcer.AddFunction("stringContains", stringContainsFunc)
+	// ABACエンジンの初期化
+	if err := abacEngine.Initialize(context.Background()); err != nil {
+		return nil, fmt.Errorf("failed to initialize ABAC engine: %w", err)
+	}
 
 	service := &AuthorizationService{
-		policyStore:           policyStore,
+		casbinPolicyStore:     casbinPolicyStore,
 		rbacEnforcer:          rbacEnforcer,
-		abacEnforcer:          abacEnforcer,
-		policyEngine:          policyEngine,
-		policyRefreshInterval: 10 * time.Minute, // ポリシー再読み込み間隔
-		permissionCacheTTL:    5 * time.Minute,  // 権限チェック結果キャッシュ有効期限
+		abacEngine:            abacEngine,
+		config:                config,
+		policyRefreshInterval: config.PolicyRefreshInterval,
+		permissionCacheTTL:    config.PermissionCacheTTL,
 	}
 
 	// メトリクス追跡を自動有効化
@@ -153,26 +129,27 @@ func NewAuthorizationService(policyStore PolicyStore, policyEngine *PolicyEngine
 // RefreshPolicies はポリシーストアからポリシーを再読み込み
 func (s *AuthorizationService) RefreshPolicies(ctx context.Context) error {
 	// ポリシーの読み込み
-	policies, err := s.policyStore.LoadPolicies(ctx)
+	policies, err := s.casbinPolicyStore.LoadPolicies(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to load policies: %w", err)
 	}
 
-	// Casbinエンフォーサーにポリシーを追加
+	// RBACエンフォーサーにポリシーを追加
 	s.rbacEnforcer.ClearPolicy()
-	s.abacEnforcer.ClearPolicy()
 
 	for _, policy := range policies {
-		switch policy.Type {
-		case "rbac":
+		if policy.Type == "rbac" {
 			s.rbacEnforcer.AddPolicy(policy.Subject, policy.Resource, policy.Action)
-		case "abac":
-			s.abacEnforcer.AddPolicy(policy.Condition, policy.Resource, policy.Action)
 		}
 	}
 
+	// ABACエンジンにポリシーを更新
+	if err := s.abacEngine.RefreshPolicies(ctx, policies); err != nil {
+		return fmt.Errorf("failed to refresh ABAC policies: %w", err)
+	}
+
 	// ロールの読み込み
-	roles, err := s.policyStore.LoadRoles(ctx)
+	roles, err := s.casbinPolicyStore.LoadRoles(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to load roles: %w", err)
 	}
@@ -279,30 +256,10 @@ func (s *AuthorizationService) checkRBACPermission(user *model.User, resource, a
 
 // checkABACPermission はABACによる権限チェック
 func (s *AuthorizationService) checkABACPermission(user *model.User, resource, action string) (bool, error) {
-	// First, try to use the structured policy engine if available
-	if s.policyEngine != nil {
-		allowed, err := s.policyEngine.EvaluateProductAccess(context.Background(), user, resource, action)
-		if err == nil {
-			return allowed, nil
-		}
-		// If policy engine fails, fall back to casbin
-		fmt.Printf("Policy engine evaluation failed, falling back to casbin: %v\n", err)
-	}
-
-	// Fallback to casbin ABAC
-	userRequest := &model.UserRequest{
-		ID:       user.ID,
-		Username: user.Username,
-		Role:     user.Role,
-		Age:      user.Age,
-		Location: user.Location,
-		Premium:  user.Premium,
-		VIPLevel: user.VIPLevel,
-	}
-
-	allowed, err := s.abacEnforcer.Enforce(userRequest, resource, action)
+	// Use the configured ABAC engine
+	allowed, err := s.abacEngine.EvaluatePermission(context.Background(), user, resource, action)
 	if err != nil {
-		return false, fmt.Errorf("ABAC permission check failed: %w", err)
+		return false, fmt.Errorf("ABAC permission check failed with %s engine: %w", s.abacEngine.GetEngineType(), err)
 	}
 
 	return allowed, nil
@@ -319,7 +276,7 @@ func (s *AuthorizationService) AddProductPolicy(ctx context.Context, productID s
 		CreatedBy: createdBy,
 	}
 
-	if err := s.policyStore.SavePolicy(ctx, rule); err != nil {
+	if err := s.casbinPolicyStore.SavePolicy(ctx, rule); err != nil {
 		return fmt.Errorf("failed to save product policy: %w", err)
 	}
 
@@ -331,10 +288,11 @@ func (s *AuthorizationService) AddProductPolicy(ctx context.Context, productID s
 		Reason:    fmt.Sprintf("Product policy added for product %s", productID),
 	}
 
-	if err := s.policyStore.LogPolicyChange(ctx, change); err != nil {
+	if err := s.casbinPolicyStore.LogPolicyChange(ctx, change); err != nil {
 		fmt.Printf("Warning: failed to log policy change: %v\n", err)
 	}
 
+	// ポリシーの再読み込み
 	return s.RefreshPolicies(ctx)
 }
 
@@ -355,7 +313,7 @@ func (s *AuthorizationService) AddPolicy(ctx context.Context, policyType, subjec
 		CreatedBy: createdBy,
 	}
 
-	if err := s.policyStore.SavePolicy(ctx, rule); err != nil {
+	if err := s.casbinPolicyStore.SavePolicy(ctx, rule); err != nil {
 		return fmt.Errorf("failed to save policy: %w", err)
 	}
 
@@ -367,7 +325,7 @@ func (s *AuthorizationService) AddPolicy(ctx context.Context, policyType, subjec
 		Reason:    "New policy added via API",
 	}
 
-	if err := s.policyStore.LogPolicyChange(ctx, change); err != nil {
+	if err := s.casbinPolicyStore.LogPolicyChange(ctx, change); err != nil {
 		// ログ記録の失敗は警告レベルとし、処理は継続
 		fmt.Printf("Warning: failed to log policy change: %v\n", err)
 	}
@@ -379,7 +337,7 @@ func (s *AuthorizationService) AddPolicy(ctx context.Context, policyType, subjec
 // RemovePolicy はポリシーを削除
 func (s *AuthorizationService) RemovePolicy(ctx context.Context, policyID, deletedBy string) error {
 	// 削除前のポリシーを取得（監査ログ用）
-	policies, err := s.policyStore.LoadPolicies(ctx)
+	policies, err := s.casbinPolicyStore.LoadPolicies(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to load policies: %w", err)
 	}
@@ -396,7 +354,7 @@ func (s *AuthorizationService) RemovePolicy(ctx context.Context, policyID, delet
 		return fmt.Errorf("policy not found: %s", policyID)
 	}
 
-	if err := s.policyStore.DeletePolicy(ctx, *targetPolicy); err != nil {
+	if err := s.casbinPolicyStore.DeletePolicy(ctx, *targetPolicy); err != nil {
 		return fmt.Errorf("failed to delete policy: %w", err)
 	}
 
@@ -408,7 +366,7 @@ func (s *AuthorizationService) RemovePolicy(ctx context.Context, policyID, delet
 		Reason:    "Policy deleted via API",
 	}
 
-	if err := s.policyStore.LogPolicyChange(ctx, change); err != nil {
+	if err := s.casbinPolicyStore.LogPolicyChange(ctx, change); err != nil {
 		fmt.Printf("Warning: failed to log policy change: %v\n", err)
 	}
 
@@ -418,7 +376,7 @@ func (s *AuthorizationService) RemovePolicy(ctx context.Context, policyID, delet
 
 // AssignRole はユーザーにロールを割り当て
 func (s *AuthorizationService) AssignRole(ctx context.Context, userID, role, assignedBy string) error {
-	if err := s.policyStore.AssignRole(ctx, userID, role); err != nil {
+	if err := s.casbinPolicyStore.AssignRole(ctx, userID, role); err != nil {
 		return fmt.Errorf("failed to assign role: %w", err)
 	}
 
@@ -433,7 +391,7 @@ func (s *AuthorizationService) AssignRole(ctx context.Context, userID, role, ass
 		Reason:    "Role assigned via API",
 	}
 
-	if err := s.policyStore.LogPolicyChange(ctx, change); err != nil {
+	if err := s.casbinPolicyStore.LogPolicyChange(ctx, change); err != nil {
 		fmt.Printf("Warning: failed to log role assignment: %v\n", err)
 	}
 
@@ -443,7 +401,7 @@ func (s *AuthorizationService) AssignRole(ctx context.Context, userID, role, ass
 
 // GetAuditLog は監査ログを取得
 func (s *AuthorizationService) GetAuditLog(ctx context.Context, from, to time.Time) ([]PolicyChange, error) {
-	return s.policyStore.GetAuditLog(ctx, from, to)
+	return s.casbinPolicyStore.GetAuditLog(ctx, from, to)
 }
 
 // ValidatePolicy はポリシーの妥当性を検証
@@ -469,12 +427,12 @@ func (s *AuthorizationService) ValidatePolicy(rule PolicyRule) error {
 
 // GetPolicyStats はポリシーの統計情報を取得
 func (s *AuthorizationService) GetPolicyStats(ctx context.Context) (map[string]interface{}, error) {
-	policies, err := s.policyStore.LoadPolicies(ctx)
+	policies, err := s.casbinPolicyStore.LoadPolicies(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load policies: %w", err)
 	}
 
-	roles, err := s.policyStore.LoadRoles(ctx)
+	roles, err := s.casbinPolicyStore.LoadRoles(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load roles: %w", err)
 	}
