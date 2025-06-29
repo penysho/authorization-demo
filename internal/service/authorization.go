@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"authorization-demo/internal/model"
@@ -73,6 +74,12 @@ func containsFunc(args ...interface{}) (interface{}, error) {
 	return false, fmt.Errorf("first argument must be a string or array")
 }
 
+// PermissionCache represents a cache entry for permission checks
+type PermissionCache struct {
+	allowed   bool
+	expiresAt time.Time
+}
+
 // AuthorizationService は認可サービス
 type AuthorizationService struct {
 	policyStore  PolicyStore
@@ -80,9 +87,11 @@ type AuthorizationService struct {
 	abacEnforcer *casbin.Enforcer
 
 	// キャッシュ機能
-	policyCache   map[string][]PolicyRule
-	roleCacheTime time.Time
-	cacheDuration time.Duration
+	policyCache     map[string][]PolicyRule
+	roleCacheTime   time.Time
+	cacheDuration   time.Duration
+	permissionCache sync.Map // map[string]*PermissionCache
+	cacheTTL        time.Duration
 }
 
 // PolicyTemplate はポリシーテンプレートを表現
@@ -125,6 +134,7 @@ func NewAuthorizationService(policyStore PolicyStore) (*AuthorizationService, er
 		abacEnforcer:  abacEnforcer,
 		policyCache:   make(map[string][]PolicyRule),
 		cacheDuration: 5 * time.Minute, // キャッシュの有効期限
+		cacheTTL:      5 * time.Second, // Short-lived cache for frequently changing data
 	}
 
 	// 初期ポリシーの読み込み
@@ -173,18 +183,38 @@ func (s *AuthorizationService) RefreshPolicies(ctx context.Context) error {
 	return nil
 }
 
-// CheckPermission は総合的な権限チェックを行う
-func (s *AuthorizationService) CheckPermission(
-	user *model.User,
-	resource,
-	action string,
-	resourceID *string,
-) (bool, error) {
-	ctx := context.Background()
+// CheckPermission は権限をチェック（キャッシュ機能付き）
+func (s *AuthorizationService) CheckPermission(user *model.User, resource, action string, resourceID *string) (bool, error) {
+	// Generate cache key
+	cacheKey := s.generateCacheKey(user, resource, action, resourceID)
 
+	// Check cache first
+	if cached, found := s.permissionCache.Load(cacheKey); found {
+		if entry, ok := cached.(PermissionCache); ok && time.Now().Before(entry.expiresAt) {
+			return entry.allowed, nil
+		}
+	}
+
+	// Perform actual permission check
+	allowed, err := s.checkPermissionInternal(user, resource, action, resourceID)
+	if err != nil {
+		return false, err
+	}
+
+	// Cache the result
+	s.permissionCache.Store(cacheKey, PermissionCache{
+		allowed:   allowed,
+		expiresAt: time.Now().Add(s.cacheTTL),
+	})
+
+	return allowed, nil
+}
+
+// checkPermissionInternal performs the actual permission check
+func (s *AuthorizationService) checkPermissionInternal(user *model.User, resource, action string, resourceID *string) (bool, error) {
 	// キャッシュの有効性チェック
 	if time.Since(s.roleCacheTime) > s.cacheDuration {
-		if err := s.RefreshPolicies(ctx); err != nil {
+		if err := s.RefreshPolicies(context.Background()); err != nil {
 			return false, fmt.Errorf("failed to refresh policies: %w", err)
 		}
 	}
@@ -436,4 +466,28 @@ func (s *AuthorizationService) GetPolicyStats(ctx context.Context) (map[string]i
 	}
 
 	return stats, nil
+}
+
+// generateCacheKey generates a cache key for permission checks
+func (s *AuthorizationService) generateCacheKey(user *model.User, resource, action string, resourceID *string) string {
+	parts := []string{user.ID, resource, action}
+	if resourceID != nil {
+		parts = append(parts, *resourceID)
+	}
+	return strings.Join(parts, ":")
+}
+
+// ClearCache clears the permission cache
+func (s *AuthorizationService) ClearCache() {
+	s.permissionCache = sync.Map{}
+}
+
+// ClearUserCache clears cache entries for a specific user
+func (s *AuthorizationService) ClearUserCache(userID string) {
+	s.permissionCache.Range(func(key, value interface{}) bool {
+		if cacheKey, ok := key.(string); ok && strings.HasPrefix(cacheKey, userID+":") {
+			s.permissionCache.Delete(key)
+		}
+		return true
+	})
 }
