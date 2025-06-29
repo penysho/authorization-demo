@@ -34,7 +34,7 @@ func RequirePermission(authzService *service.AuthorizationService, resource, act
 		resolvedResource := resolveResource(c, resource)
 
 		// 権限チェック
-		allowed, err := authzService.CheckPermission(user, resolvedResource, action)
+		allowed, err := authzService.CheckPermission(user, resolvedResource, action, nil)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Authorization check failed"})
 			c.Abort()
@@ -83,15 +83,7 @@ func RequireProductAccess(authzService *service.AuthorizationService, productSer
 		}
 
 		// 商品アクセス権限をチェック
-		accessCtx := &service.ProductAccessContext{
-			UserID:    user.ID,
-			User:      user,
-			ProductID: productID,
-			Product:   product,
-			Action:    action,
-		}
-
-		allowed, err := authzService.CheckProductAccess(accessCtx)
+		allowed, err := authzService.CheckPermission(user, "products", action, &productID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"error":   "Authorization check failed",
@@ -130,7 +122,7 @@ func RequireBulkProductAccess(authzService *service.AuthorizationService, action
 		}
 
 		// 基本的なRBAC権限チェック（商品リソースへのアクセス権限）
-		allowed, err := authzService.CheckPermission(user, "products", action)
+		allowed, err := authzService.CheckPermission(user, "products", action, nil)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Authorization check failed"})
 			c.Abort()
@@ -147,18 +139,6 @@ func RequireBulkProductAccess(authzService *service.AuthorizationService, action
 		c.Set("user", user)
 		c.Next()
 	}
-}
-
-// extractDeviceInfo はリクエストからデバイス情報を抽出
-func extractDeviceInfo(c *gin.Context) string {
-	userAgent := c.GetHeader("User-Agent")
-	if strings.Contains(strings.ToLower(userAgent), "mobile") {
-		return "mobile"
-	}
-	if strings.Contains(strings.ToLower(userAgent), "tablet") {
-		return "tablet"
-	}
-	return "web"
 }
 
 // GetProductFromContext はコンテキストから商品情報を取得

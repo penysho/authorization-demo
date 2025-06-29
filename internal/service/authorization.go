@@ -99,7 +99,6 @@ type ProductAccessContext struct {
 	UserID    string
 	User      *model.User
 	ProductID string
-	Product   *model.Product
 	Action    string
 }
 
@@ -178,69 +177,13 @@ func (s *AuthorizationService) RefreshPolicies(ctx context.Context) error {
 	return nil
 }
 
-// CheckProductAccess は商品アクセス権限の総合チェック
-func (s *AuthorizationService) CheckProductAccess(ctx *ProductAccessContext) (bool, error) {
-	// キャッシュの有効性チェック
-	if time.Since(s.roleCacheTime) > s.cacheDuration {
-		if err := s.RefreshPolicies(context.Background()); err != nil {
-			return false, fmt.Errorf("failed to refresh policies: %w", err)
-		}
-	}
-
-	// 1. RBACによる基本的な権限チェック
-	rbacAllowed, err := s.checkRBACPermission(ctx.User, "products", ctx.Action)
-	if err != nil {
-		return false, err
-	}
-
-	if !rbacAllowed {
-		return false, nil
-	}
-
-	// 2. CasbinのABAC機能による詳細なアクセス制御チェック
-	abacAllowed, err := s.checkProductABACWithCasbin(ctx)
-	if err != nil {
-		return false, err
-	}
-
-	return abacAllowed, nil
-}
-
-// checkProductABACWithCasbin はCasbinのABAC機能を使った商品アクセス制御
-func (s *AuthorizationService) checkProductABACWithCasbin(ctx *ProductAccessContext) (bool, error) {
-	// ユーザー属性の準備
-	userAttrs := map[string]interface{}{
-		"ID":       ctx.User.ID,
-		"Username": ctx.User.Username,
-		"Role":     ctx.User.Role,
-		"Age":      ctx.User.Age,
-		"Location": ctx.User.Location,
-		"Premium":  ctx.User.Premium,
-		"VIPLevel": ctx.User.VIPLevel,
-	}
-
-	// 商品オブジェクトの準備（商品属性を含む）
-	// Region文字列を配列に変換（含有チェック用）
-	var regionArray []string
-	if ctx.Product.Region != "" {
-		regionArray = strings.Split(ctx.Product.Region, ",")
-		// スペースをトリム
-		for i, region := range regionArray {
-			regionArray[i] = strings.TrimSpace(region)
-		}
-	}
-
-	// Casbin ABAC エンフォーサーによる権限チェック
-	allowed, err := s.abacEnforcer.Enforce(userAttrs, ctx.Product.ID, ctx.Action)
-	if err != nil {
-		return false, fmt.Errorf("ABAC permission check failed: %w", err)
-	}
-
-	return allowed, nil
-}
-
 // CheckPermission は総合的な権限チェックを行う
-func (s *AuthorizationService) CheckPermission(user *model.User, resource, action string) (bool, error) {
+func (s *AuthorizationService) CheckPermission(
+	user *model.User,
+	resource,
+	action string,
+	resourceID *string,
+) (bool, error) {
 	ctx := context.Background()
 
 	// キャッシュの有効性チェック
@@ -262,8 +205,8 @@ func (s *AuthorizationService) CheckPermission(user *model.User, resource, actio
 	}
 
 	// 個別リソースの場合はABACでさらに詳細チェック
-	if strings.HasPrefix(resource, "product_") {
-		abacAllowed, err := s.checkABACPermission(user, resource, action)
+	if resourceID != nil {
+		abacAllowed, err := s.checkABACPermission(user, *resourceID, action)
 		if err != nil {
 			return false, err
 		}
@@ -275,12 +218,7 @@ func (s *AuthorizationService) CheckPermission(user *model.User, resource, actio
 
 // checkRBACPermission はRBACによる権限チェック
 func (s *AuthorizationService) checkRBACPermission(user *model.User, resource, action string) (bool, error) {
-	baseResource := resource
-	if strings.HasPrefix(resource, "product_") {
-		baseResource = "products"
-	}
-
-	allowed, err := s.rbacEnforcer.Enforce(user.Role, baseResource, action)
+	allowed, err := s.rbacEnforcer.Enforce(user.Role, resource, action)
 	if err != nil {
 		return false, fmt.Errorf("RBAC permission check failed: %w", err)
 	}

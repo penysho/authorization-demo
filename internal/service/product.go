@@ -123,15 +123,7 @@ func (s *productServiceImpl) GetProductsForUser(ctx context.Context, user *model
 	// ABACによる詳細フィルタリング
 	var filteredProducts []model.Product
 	for _, product := range products {
-		accessCtx := &ProductAccessContext{
-			UserID:    user.ID,
-			User:      user,
-			ProductID: product.ID,
-			Product:   &product,
-			Action:    "read",
-		}
-
-		allowed, err := s.authSvc.CheckProductAccess(accessCtx)
+		allowed, err := s.authSvc.CheckPermission(user, "products", "read", &product.ID)
 		if err != nil {
 			fmt.Printf("Warning: failed to check access for product %s: %v\n", product.ID, err)
 			continue
@@ -230,28 +222,12 @@ func (s *productServiceImpl) GetProductPolicy(ctx context.Context, productID str
 
 // CheckProductAccess は商品アクセス権限をチェック
 func (s *productServiceImpl) CheckProductAccess(ctx context.Context, userID, productID, action string) (bool, error) {
-	// ユーザー情報を取得
 	var user model.User
 	if err := s.db.WithContext(ctx).Where("id = ?", userID).First(&user).Error; err != nil {
 		return false, fmt.Errorf("failed to get user: %w", err)
 	}
 
-	// 商品情報を取得
-	product, err := s.GetProduct(ctx, productID)
-	if err != nil {
-		return false, err
-	}
-
-	// アクセス権限をチェック
-	accessCtx := &ProductAccessContext{
-		UserID:    userID,
-		User:      &user,
-		ProductID: productID,
-		Product:   product,
-		Action:    action,
-	}
-
-	return s.authSvc.CheckProductAccess(accessCtx)
+	return s.authSvc.CheckPermission(&user, "products", action, &productID)
 }
 
 // updateProductPolicy は商品更新時にポリシーを更新
