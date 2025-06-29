@@ -40,6 +40,18 @@ func (h *ProductHandler) GetProducts(c *gin.Context) {
 		Region:   c.Query("region"),
 	}
 
+	// ページングパラメータ
+	if page := c.Query("page"); page != "" {
+		if p, err := strconv.Atoi(page); err == nil && p > 0 {
+			filters.Page = p
+		}
+	}
+	if limit := c.Query("limit"); limit != "" {
+		if l, err := strconv.Atoi(limit); err == nil && l > 0 {
+			filters.Limit = l
+		}
+	}
+
 	// 価格フィルタ
 	if minPrice := c.Query("min_price"); minPrice != "" {
 		if price, err := strconv.ParseFloat(minPrice, 64); err == nil {
@@ -59,7 +71,7 @@ func (h *ProductHandler) GetProducts(c *gin.Context) {
 	}
 
 	// ユーザーがアクセス可能な商品を取得
-	products, err := h.productService.GetProductsForUser(c.Request.Context(), user, filters)
+	pagedResponse, err := h.productService.GetProductsForUser(c.Request.Context(), user, filters)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to get products",
@@ -69,8 +81,12 @@ func (h *ProductHandler) GetProducts(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, model.ProductListResponse{
-		Products: products,
-		Total:    len(products),
+		Products:   pagedResponse.Products,
+		Total:      len(pagedResponse.Products), // 後方互換性のため
+		Page:       pagedResponse.Page,
+		Limit:      pagedResponse.Limit,
+		TotalPages: pagedResponse.TotalPages,
+		TotalItems: pagedResponse.TotalItems,
 	})
 }
 

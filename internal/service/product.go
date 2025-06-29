@@ -11,11 +11,20 @@ import (
 	"gorm.io/gorm"
 )
 
+// PagedProductResponse はページング情報を含む商品一覧レスポンス
+type PagedProductResponse struct {
+	Products   []model.Product `json:"products"`
+	Page       int             `json:"page"`
+	Limit      int             `json:"limit"`
+	TotalPages int             `json:"total_pages"`
+	TotalItems int             `json:"total_items"`
+}
+
 // ProductService は商品サービスのインターフェース
 type ProductService interface {
 	CreateProduct(ctx context.Context, req *model.ProductRequest, createdBy string) (*model.Product, error)
 	GetProduct(ctx context.Context, id string) (*model.Product, error)
-	GetProductsForUser(ctx context.Context, user *model.User, filters ProductFilters) ([]model.Product, error)
+	GetProductsForUser(ctx context.Context, user *model.User, filters ProductFilters) (*PagedProductResponse, error)
 	UpdateProduct(ctx context.Context, id string, req *model.ProductRequest, updatedBy string) (*model.Product, error)
 	DeleteProduct(ctx context.Context, id string, deletedBy string) error
 
@@ -34,6 +43,8 @@ type ProductFilters struct {
 	Region    string
 	OnlyAdult *bool
 	VIPLevel  int
+	Page      int // ページ番号（1から開始）
+	Limit     int // 1ページあたりの件数
 }
 
 // productServiceImpl は商品サービスの実装
@@ -86,7 +97,7 @@ func (s *productServiceImpl) GetProduct(ctx context.Context, id string) (*model.
 }
 
 // GetProductsForUser はユーザーがアクセス可能な商品一覧を取得
-func (s *productServiceImpl) GetProductsForUser(ctx context.Context, user *model.User, filters ProductFilters) ([]model.Product, error) {
+func (s *productServiceImpl) GetProductsForUser(ctx context.Context, user *model.User, filters ProductFilters) (*PagedProductResponse, error) {
 	var products []model.Product
 	query := s.db.WithContext(ctx).Model(&model.Product{})
 
@@ -100,21 +111,6 @@ func (s *productServiceImpl) GetProductsForUser(ctx context.Context, user *model
 	if filters.MaxPrice > 0 {
 		query = query.Where("price <= ?", filters.MaxPrice)
 	}
-
-	// ユーザーの年齢に基づくフィルタ
-	if user.Age > 0 {
-		query = query.Where("age_limit <= ? OR age_limit = 0", user.Age)
-	}
-
-	// 成人向けコンテンツフィルタ
-	if user.Age < 18 {
-		query = query.Where("is_adult = false")
-	} else if filters.OnlyAdult != nil && *filters.OnlyAdult {
-		query = query.Where("is_adult = true")
-	}
-
-	// 地域フィルタはABACレベルで処理するため、ここではスキップ
-	// （基本的なDBフィルタリングは年齢と成人向けコンテンツのみ）
 
 	if err := query.Find(&products).Error; err != nil {
 		return nil, fmt.Errorf("failed to get products: %w", err)
@@ -134,7 +130,43 @@ func (s *productServiceImpl) GetProductsForUser(ctx context.Context, user *model
 		}
 	}
 
-	return filteredProducts, nil
+	// ページング処理のためのデフォルト値設定
+	page := filters.Page
+	if page < 1 {
+		page = 1
+	}
+	limit := filters.Limit
+	if limit < 1 {
+		limit = 10 // デフォルト値
+	}
+
+	totalItems := len(filteredProducts)
+	totalPages := (totalItems + limit - 1) / limit
+	if totalPages < 1 {
+		totalPages = 1
+	}
+
+	// ページング処理
+	startIndex := (page - 1) * limit
+	endIndex := startIndex + limit
+
+	var pagedProducts []model.Product
+	if startIndex < totalItems {
+		if endIndex > totalItems {
+			endIndex = totalItems
+		}
+		pagedProducts = filteredProducts[startIndex:endIndex]
+	} else {
+		pagedProducts = []model.Product{}
+	}
+
+	return &PagedProductResponse{
+		Products:   pagedProducts,
+		Page:       page,
+		Limit:      limit,
+		TotalPages: totalPages,
+		TotalItems: totalItems,
+	}, nil
 }
 
 // UpdateProduct は商品を更新

@@ -66,8 +66,12 @@ type ProductRequest struct {
 
 // ProductListResponse は商品一覧のレスポンス
 type ProductListResponse struct {
-	Products []Product `json:"products"`
-	Total    int       `json:"total"`
+	Products   []Product `json:"products"`
+	Total      int       `json:"total"`
+	Page       int       `json:"page"`
+	Limit      int       `json:"limit"`
+	TotalPages int       `json:"total_pages"`
+	TotalItems int       `json:"total_items"`
 }
 
 // ProductABACContext はABAC用の商品コンテキスト
