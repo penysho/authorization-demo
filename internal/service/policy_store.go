@@ -28,17 +28,16 @@ type PolicyStore interface {
 
 // PolicyRule はポリシールールを表現
 type PolicyRule struct {
-	ID         string            `json:"id"`
-	Type       string            `json:"type"` // "rbac" or "abac"
-	Subject    string            `json:"subject"`
-	Resource   string            `json:"resource"`
-	Action     string            `json:"action"`
-	Condition  string            `json:"condition,omitempty"`  // ABAC用
-	Attributes map[string]string `json:"attributes,omitempty"` // ABAC用
-	Effect     string            `json:"effect"`               // "allow" or "deny"
-	CreatedAt  time.Time         `json:"created_at"`
-	UpdatedAt  time.Time         `json:"updated_at"`
-	CreatedBy  string            `json:"created_by"`
+	ID        string    `json:"id"`
+	Type      string    `json:"type"` // "rbac" or "abac"
+	Subject   string    `json:"subject"`
+	Resource  string    `json:"resource"`
+	Action    string    `json:"action"`
+	Condition string    `json:"condition,omitempty"` // ABAC用
+	Effect    string    `json:"effect"`              // "allow" or "deny"
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	CreatedBy string    `json:"created_by"`
 }
 
 // RoleAssignment はユーザーとロールの割り当てを表現
@@ -62,17 +61,16 @@ type PolicyChange struct {
 
 // Database models for GORM
 type PolicyRuleDB struct {
-	ID         string    `gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
-	Type       string    `gorm:"not null;index"`
-	Subject    string    `gorm:"not null;index"`
-	Resource   string    `gorm:"not null;index"`
-	Action     string    `gorm:"not null;index"`
-	Condition  string    `gorm:"type:text"`
-	Attributes *string   `gorm:"type:jsonb"` // JSON storage for attributes, nullable
-	Effect     string    `gorm:"not null;default:'allow'"`
-	CreatedAt  time.Time `gorm:"autoCreateTime"`
-	UpdatedAt  time.Time `gorm:"autoUpdateTime"`
-	CreatedBy  string    `gorm:"not null"`
+	ID        string    `gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
+	Type      string    `gorm:"not null;index"`
+	Subject   string    `gorm:"not null;index"`
+	Resource  string    `gorm:"not null;index"`
+	Action    string    `gorm:"not null;index"`
+	Condition string    `gorm:"type:text"`
+	Effect    string    `gorm:"not null;default:'allow'"`
+	CreatedAt time.Time `gorm:"autoCreateTime"`
+	UpdatedAt time.Time `gorm:"autoUpdateTime"`
+	CreatedBy string    `gorm:"not null"`
 }
 
 func (PolicyRuleDB) TableName() string {
@@ -126,52 +124,32 @@ func (s *DatabasePolicyStore) AutoMigrate() error {
 
 // Helper functions to convert between models
 func (s *DatabasePolicyStore) policyRuleToDB(rule PolicyRule) (*PolicyRuleDB, error) {
-	var attributesJSON *string
-	if len(rule.Attributes) > 0 {
-		bytes, err := json.Marshal(rule.Attributes)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal attributes: %w", err)
-		}
-		jsonStr := string(bytes)
-		attributesJSON = &jsonStr
-	}
-
 	return &PolicyRuleDB{
-		ID:         rule.ID,
-		Type:       rule.Type,
-		Subject:    rule.Subject,
-		Resource:   rule.Resource,
-		Action:     rule.Action,
-		Condition:  rule.Condition,
-		Attributes: attributesJSON,
-		Effect:     rule.Effect,
-		CreatedAt:  rule.CreatedAt,
-		UpdatedAt:  rule.UpdatedAt,
-		CreatedBy:  rule.CreatedBy,
+		ID:        rule.ID,
+		Type:      rule.Type,
+		Subject:   rule.Subject,
+		Resource:  rule.Resource,
+		Action:    rule.Action,
+		Condition: rule.Condition,
+		Effect:    rule.Effect,
+		CreatedAt: rule.CreatedAt,
+		UpdatedAt: rule.UpdatedAt,
+		CreatedBy: rule.CreatedBy,
 	}, nil
 }
 
 func (s *DatabasePolicyStore) policyRuleFromDB(dbRule PolicyRuleDB) (PolicyRule, error) {
-	var attributes map[string]string
-	if dbRule.Attributes != nil && *dbRule.Attributes != "" {
-		err := json.Unmarshal([]byte(*dbRule.Attributes), &attributes)
-		if err != nil {
-			return PolicyRule{}, fmt.Errorf("failed to unmarshal attributes: %w", err)
-		}
-	}
-
 	return PolicyRule{
-		ID:         dbRule.ID,
-		Type:       dbRule.Type,
-		Subject:    dbRule.Subject,
-		Resource:   dbRule.Resource,
-		Action:     dbRule.Action,
-		Condition:  dbRule.Condition,
-		Attributes: attributes,
-		Effect:     dbRule.Effect,
-		CreatedAt:  dbRule.CreatedAt,
-		UpdatedAt:  dbRule.UpdatedAt,
-		CreatedBy:  dbRule.CreatedBy,
+		ID:        dbRule.ID,
+		Type:      dbRule.Type,
+		Subject:   dbRule.Subject,
+		Resource:  dbRule.Resource,
+		Action:    dbRule.Action,
+		Condition: dbRule.Condition,
+		Effect:    dbRule.Effect,
+		CreatedAt: dbRule.CreatedAt,
+		UpdatedAt: dbRule.UpdatedAt,
+		CreatedBy: dbRule.CreatedBy,
 	}, nil
 }
 

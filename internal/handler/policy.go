@@ -23,11 +23,10 @@ func NewPolicyHandler(authzService *service.AuthorizationService) *PolicyHandler
 
 // CreatePolicyRequest はポリシー作成リクエスト
 type CreatePolicyRequest struct {
-	Type       string            `json:"type" binding:"required,oneof=rbac abac"`
-	Subject    string            `json:"subject" binding:"required"`
-	Resource   string            `json:"resource" binding:"required"`
-	Action     string            `json:"action" binding:"required"`
-	Attributes map[string]string `json:"attributes,omitempty"`
+	Type     string `json:"type" binding:"required,oneof=rbac abac"`
+	Subject  string `json:"subject" binding:"required"`
+	Resource string `json:"resource" binding:"required"`
+	Action   string `json:"action" binding:"required"`
 }
 
 // AssignRoleRequest はロール割り当てリクエスト
@@ -66,7 +65,6 @@ func (h *PolicyHandler) CreatePolicy(c *gin.Context) {
 		req.Resource,
 		req.Action,
 		createdBy,
-		req.Attributes,
 	)
 
 	if err != nil {
@@ -236,71 +234,6 @@ func (h *PolicyHandler) RefreshPolicies(c *gin.Context) {
 	})
 }
 
-// CreatePolicyFromTemplate はテンプレートからポリシーを作成
-func (h *PolicyHandler) CreatePolicyFromTemplate(c *gin.Context) {
-	var req PolicyTemplateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Invalid request format",
-			"details": err.Error(),
-		})
-		return
-	}
-
-	createdBy := c.GetHeader("X-User-ID")
-	if createdBy == "" {
-		createdBy = "system"
-	}
-
-	// 事前定義されたテンプレート
-	templates := map[string]service.PolicyTemplate{
-		"admin_access": {
-			Name:        "admin_access",
-			Description: "Admin access template",
-			Type:        "rbac",
-			Template:    "{{role}}, {{resource}}, {{action}}",
-			Variables:   map[string]string{"role": "", "resource": "", "action": ""},
-		},
-		"age_restricted_content": {
-			Name:        "age_restricted_content",
-			Description: "Age-based content access template",
-			Type:        "abac",
-			Template:    "r.sub.Age >= {{min_age}}, {{resource}}, read",
-			Variables:   map[string]string{"min_age": "", "resource": ""},
-		},
-	}
-
-	template, exists := templates[req.TemplateName]
-	if !exists {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":               "Template not found",
-			"available_templates": []string{"admin_access", "age_restricted_content"},
-		})
-		return
-	}
-
-	err := h.authzService.CreatePolicyFromTemplate(
-		c.Request.Context(),
-		template,
-		req.Variables,
-		createdBy,
-	)
-
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "Failed to create policy from template",
-			"details": err.Error(),
-		})
-		return
-	}
-
-	c.JSON(http.StatusCreated, gin.H{
-		"message":   "Policy created from template successfully",
-		"template":  req.TemplateName,
-		"variables": req.Variables,
-	})
-}
-
 // ValidatePolicy はポリシーの妥当性を検証
 func (h *PolicyHandler) ValidatePolicy(c *gin.Context) {
 	var rule service.PolicyRule
@@ -325,23 +258,5 @@ func (h *PolicyHandler) ValidatePolicy(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"valid":   true,
 		"message": "Policy is valid",
-	})
-}
-
-// HealthCheck はポリシーサービスのヘルスチェック
-func (h *PolicyHandler) HealthCheck(c *gin.Context) {
-	stats, err := h.authzService.GetPolicyStats(c.Request.Context())
-	if err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"status": "unhealthy",
-			"error":  err.Error(),
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"status":     "healthy",
-		"statistics": stats,
-		"timestamp":  time.Now(),
 	})
 }

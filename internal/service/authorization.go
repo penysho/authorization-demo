@@ -152,11 +152,11 @@ func (s *AuthorizationService) RefreshPolicies(ctx context.Context) error {
 		case "rbac":
 			s.rbacEnforcer.AddPolicy(policy.Subject, policy.Resource, policy.Action)
 		case "abac":
-			rule := policy.Subject
+			subRule := policy.Condition
 			resource := policy.Resource
 			action := policy.Action
 
-			s.abacEnforcer.AddPolicy(rule, resource, action)
+			s.abacEnforcer.AddPolicy(subRule, resource, action)
 		}
 	}
 
@@ -249,17 +249,10 @@ func (s *AuthorizationService) checkABACPermission(user *model.User, resource, a
 // AddProductPolicy は商品固有のポリシーを追加
 func (s *AuthorizationService) AddProductPolicy(ctx context.Context, productID string, policy ProductPolicy, createdBy string) error {
 	rule := PolicyRule{
-		Type:     "abac",
-		Subject:  policy.SubjectRule,
-		Resource: "product_" + productID,
-		Action:   policy.Action,
-		Attributes: map[string]string{
-			"age_limit": fmt.Sprintf("%d", policy.AgeLimit),
-			"category":  policy.Category,
-			"is_adult":  fmt.Sprintf("%t", policy.IsAdult),
-			"region":    policy.Region,
-			"vip_level": fmt.Sprintf("%d", policy.VIPLevel),
-		},
+		Type:      "abac",
+		Subject:   policy.SubjectRule,
+		Resource:  "product_" + productID,
+		Action:    policy.Action,
 		Effect:    "allow",
 		CreatedBy: createdBy,
 	}
@@ -295,15 +288,14 @@ type ProductPolicy struct {
 }
 
 // AddPolicy は新しいポリシーを追加
-func (s *AuthorizationService) AddPolicy(ctx context.Context, policyType, subject, resource, action, createdBy string, attributes map[string]string) error {
+func (s *AuthorizationService) AddPolicy(ctx context.Context, policyType, subject, resource, action, createdBy string) error {
 	rule := PolicyRule{
-		Type:       policyType,
-		Subject:    subject,
-		Resource:   resource,
-		Action:     action,
-		Attributes: attributes,
-		Effect:     "allow",
-		CreatedBy:  createdBy,
+		Type:      policyType,
+		Subject:   subject,
+		Resource:  resource,
+		Action:    action,
+		Effect:    "allow",
+		CreatedBy: createdBy,
 	}
 
 	if err := s.policyStore.SavePolicy(ctx, rule); err != nil {
@@ -395,32 +387,6 @@ func (s *AuthorizationService) AssignRole(ctx context.Context, userID, role, ass
 // GetAuditLog は監査ログを取得
 func (s *AuthorizationService) GetAuditLog(ctx context.Context, from, to time.Time) ([]PolicyChange, error) {
 	return s.policyStore.GetAuditLog(ctx, from, to)
-}
-
-// CreatePolicyFromTemplate はテンプレートからポリシーを作成
-func (s *AuthorizationService) CreatePolicyFromTemplate(ctx context.Context, template PolicyTemplate, variables map[string]string, createdBy string) error {
-	// テンプレート変数の置換
-	policyTemplate := template.Template
-	for key, value := range variables {
-		policyTemplate = strings.ReplaceAll(policyTemplate, fmt.Sprintf("{{%s}}", key), value)
-	}
-
-	// ポリシールールの解析（簡単な例）
-	parts := strings.Split(policyTemplate, ",")
-	if len(parts) < 3 {
-		return fmt.Errorf("invalid template format")
-	}
-
-	rule := PolicyRule{
-		Type:      template.Type,
-		Subject:   strings.TrimSpace(parts[0]),
-		Resource:  strings.TrimSpace(parts[1]),
-		Action:    strings.TrimSpace(parts[2]),
-		Effect:    "allow",
-		CreatedBy: createdBy,
-	}
-
-	return s.AddPolicy(ctx, rule.Type, rule.Subject, rule.Resource, rule.Action, createdBy, nil)
 }
 
 // ValidatePolicy はポリシーの妥当性を検証

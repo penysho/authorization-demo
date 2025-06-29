@@ -442,19 +442,19 @@ func setupInitialPolicies(store service.PolicyStore, userService service.UserSer
 		// 仮のABACポリシー
 		if product.IsAdult {
 			abacPolicies = append(abacPolicies, service.PolicyRule{
-				Type:     "abac",
-				Subject:  "r.sub.Age >= 18",
-				Resource: product.ID,
-				Action:   "read",
-				Effect:   "allow",
+				Type:      "abac",
+				Condition: "r.sub.Age >= 18",
+				Resource:  product.ID,
+				Action:    "read",
+				Effect:    "allow",
 			})
 		} else {
 			abacPolicies = append(abacPolicies, service.PolicyRule{
-				Type:     "abac",
-				Subject:  "r.sub.Age >= 0",
-				Resource: product.ID,
-				Action:   "read",
-				Effect:   "allow",
+				Type:      "abac",
+				Condition: "r.sub.Age >= 0",
+				Resource:  product.ID,
+				Action:    "read",
+				Effect:    "allow",
 			})
 		}
 	}
