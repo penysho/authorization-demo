@@ -465,9 +465,10 @@ func (s *AuthorizationService) GetPolicyStats(ctx context.Context) (map[string]i
 	}
 
 	for _, policy := range policies {
-		if policy.Type == "rbac" {
+		switch policy.Type {
+		case "rbac":
 			stats["rbac_policies"] = stats["rbac_policies"].(int) + 1
-		} else if policy.Type == "abac" {
+		case "abac":
 			stats["abac_policies"] = stats["abac_policies"].(int) + 1
 		}
 	}
