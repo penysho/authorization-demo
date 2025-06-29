@@ -97,39 +97,8 @@ func (s *productServiceImpl) GetProduct(ctx context.Context, id string) (*model.
 }
 
 // GetProductsForUser はユーザーがアクセス可能な商品一覧を取得
+// PDP-Level Filtering with Information Graph パターンを実装
 func (s *productServiceImpl) GetProductsForUser(ctx context.Context, user *model.User, filters ProductFilters) (*PagedProductResponse, error) {
-	var products []model.Product
-	query := s.db.WithContext(ctx).Model(&model.Product{})
-
-	// 基本フィルタ
-	if filters.Category != "" {
-		query = query.Where("category = ?", filters.Category)
-	}
-	if filters.MinPrice > 0 {
-		query = query.Where("price >= ?", filters.MinPrice)
-	}
-	if filters.MaxPrice > 0 {
-		query = query.Where("price <= ?", filters.MaxPrice)
-	}
-
-	if err := query.Find(&products).Error; err != nil {
-		return nil, fmt.Errorf("failed to get products: %w", err)
-	}
-
-	// ABACによる詳細フィルタリング
-	var filteredProducts []model.Product
-	for _, product := range products {
-		allowed, err := s.authSvc.CheckPermission(user, "products", "read", &product.ID)
-		if err != nil {
-			fmt.Printf("Warning: failed to check access for product %s: %v\n", product.ID, err)
-			continue
-		}
-
-		if allowed {
-			filteredProducts = append(filteredProducts, product)
-		}
-	}
-
 	// ページング処理のためのデフォルト値設定
 	page := filters.Page
 	if page < 1 {
@@ -140,33 +109,143 @@ func (s *productServiceImpl) GetProductsForUser(ctx context.Context, user *model
 		limit = 10 // デフォルト値
 	}
 
-	totalItems := len(filteredProducts)
-	totalPages := (totalItems + limit - 1) / limit
+	// Step 1: 基本フィルタを適用して候補商品IDを軽量取得
+	candidateIDs, _, err := s.getCandidateProductIDs(ctx, filters)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get candidate product IDs: %w", err)
+	}
+
+	if len(candidateIDs) == 0 {
+		return &PagedProductResponse{
+			Products:   []model.Product{},
+			Page:       page,
+			Limit:      limit,
+			TotalPages: 1,
+			TotalItems: 0,
+		}, nil
+	}
+
+	// Step 2: PDP-Level Filtering - バルク権限チェック
+	accessibleIDs, err := s.authSvc.GetAccessibleResourceIDs(ctx, user, "products", "read", candidateIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to filter accessible products: %w", err)
+	}
+
+	if len(accessibleIDs) == 0 {
+		return &PagedProductResponse{
+			Products:   []model.Product{},
+			Page:       page,
+			Limit:      limit,
+			TotalPages: 1,
+			TotalItems: 0,
+		}, nil
+	}
+
+	// Step 3: データベースレベルでページングを適用してアクセス可能な商品のみを取得
+	products, err := s.getProductsByIDsWithPaging(ctx, accessibleIDs, page, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get products by IDs: %w", err)
+	}
+
+	totalAccessible := len(accessibleIDs)
+	totalPages := (totalAccessible + limit - 1) / limit
 	if totalPages < 1 {
 		totalPages = 1
 	}
 
-	// ページング処理
-	startIndex := (page - 1) * limit
-	endIndex := startIndex + limit
-
-	var pagedProducts []model.Product
-	if startIndex < totalItems {
-		if endIndex > totalItems {
-			endIndex = totalItems
-		}
-		pagedProducts = filteredProducts[startIndex:endIndex]
-	} else {
-		pagedProducts = []model.Product{}
-	}
-
 	return &PagedProductResponse{
-		Products:   pagedProducts,
+		Products:   products,
 		Page:       page,
 		Limit:      limit,
 		TotalPages: totalPages,
-		TotalItems: totalItems,
+		TotalItems: totalAccessible,
 	}, nil
+}
+
+// getCandidateProductIDs は基本フィルタを適用して候補商品IDを軽量取得
+func (s *productServiceImpl) getCandidateProductIDs(ctx context.Context, filters ProductFilters) ([]string, int, error) {
+	query := s.db.WithContext(ctx).Model(&model.Product{}).Select("id")
+
+	// 基本フィルタを適用
+	if filters.Category != "" {
+		query = query.Where("category = ?", filters.Category)
+	}
+	if filters.MinPrice > 0 {
+		query = query.Where("price >= ?", filters.MinPrice)
+	}
+	if filters.MaxPrice > 0 {
+		query = query.Where("price <= ?", filters.MaxPrice)
+	}
+	if filters.AgeLimit > 0 {
+		query = query.Where("age_limit <= ?", filters.AgeLimit)
+	}
+	if filters.Region != "" {
+		query = query.Where("region LIKE ?", "%"+filters.Region+"%")
+	}
+	if filters.OnlyAdult != nil {
+		query = query.Where("is_adult = ?", *filters.OnlyAdult)
+	}
+	if filters.VIPLevel > 0 {
+		// VIPレベルに基づく商品フィルタリング（カテゴリベース）
+		vipCategories := s.getVIPCategories(filters.VIPLevel)
+		if len(vipCategories) > 0 {
+			query = query.Where("category IN ?", vipCategories)
+		}
+	}
+
+	// 総数を取得
+	var totalCount int64
+	if err := query.Count(&totalCount).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to count candidate products: %w", err)
+	}
+
+	// IDのみを取得（メモリ効率的）
+	var ids []string
+	if err := query.Pluck("id", &ids).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to get candidate product IDs: %w", err)
+	}
+
+	return ids, int(totalCount), nil
+}
+
+// getProductsByIDsWithPaging は指定されたIDリストから商品を取得（ページング付き）
+func (s *productServiceImpl) getProductsByIDsWithPaging(ctx context.Context, productIDs []string, page, limit int) ([]model.Product, error) {
+	if len(productIDs) == 0 {
+		return []model.Product{}, nil
+	}
+
+	// ページングのためのオフセット計算
+	offset := (page - 1) * limit
+
+	var products []model.Product
+	query := s.db.WithContext(ctx).Where("id IN ?", productIDs).
+		Order("created_at DESC"). // 作成日時の降順でソート
+		Offset(offset).
+		Limit(limit)
+
+	if err := query.Find(&products).Error; err != nil {
+		return nil, fmt.Errorf("failed to get products by IDs: %w", err)
+	}
+
+	return products, nil
+}
+
+// getVIPCategories はVIPレベルに基づいてアクセス可能なカテゴリを取得
+func (s *productServiceImpl) getVIPCategories(vipLevel int) []string {
+	switch vipLevel {
+	case 1:
+		return []string{"basic", "standard"}
+	case 2:
+		return []string{"basic", "standard", "premium"}
+	case 3:
+		return []string{"basic", "standard", "premium", "luxury"}
+	case 4:
+		return []string{"basic", "standard", "premium", "luxury", "exclusive"}
+	case 5:
+		return []string{"basic", "standard", "premium", "luxury", "exclusive", "vip-only"}
+	default:
+		return []string{"basic"}
+	}
 }
 
 // UpdateProduct は商品を更新

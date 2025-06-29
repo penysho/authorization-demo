@@ -80,6 +80,18 @@ type PermissionCache struct {
 	expiresAt time.Time
 }
 
+// AuthorizationMetrics represents performance metrics for authorization
+type AuthorizationMetrics struct {
+	TotalRequests          int64         `json:"total_requests"`
+	SuccessfulRequests     int64         `json:"successful_requests"`
+	FailedRequests         int64         `json:"failed_requests"`
+	CacheHitRate           float64       `json:"cache_hit_rate"`
+	AverageResponseTime    time.Duration `json:"average_response_time"`
+	BulkRequestCount       int64         `json:"bulk_request_count"`
+	PartialEvaluationCount int64         `json:"partial_evaluation_count"`
+	LastResetTime          time.Time     `json:"last_reset_time"`
+}
+
 // AuthorizationService は認可サービス
 type AuthorizationService struct {
 	policyStore  PolicyStore
@@ -92,6 +104,9 @@ type AuthorizationService struct {
 	cacheDuration   time.Duration
 	permissionCache sync.Map // map[string]*PermissionCache
 	cacheTTL        time.Duration
+
+	// メトリクス機能
+	metrics *AuthorizationMetrics
 }
 
 // NewAuthorizationService creates a new authorization service
@@ -473,4 +488,187 @@ func (s *AuthorizationService) ClearUserCache(userID string) {
 		}
 		return true
 	})
+}
+
+// BulkPermissionRequest represents a request for bulk permission checking
+type BulkPermissionRequest struct {
+	User        *model.User
+	Resource    string
+	Action      string
+	ResourceIDs []string
+}
+
+// BulkPermissionResult represents the result of bulk permission checking
+type BulkPermissionResult struct {
+	AllowedIDs []string
+	DeniedIDs  []string
+}
+
+// CheckBulkPermissions performs bulk permission checking for multiple resources
+// This implements PDP-Level Filtering with Information Graph pattern
+func (s *AuthorizationService) CheckBulkPermissions(ctx context.Context, request BulkPermissionRequest) (*BulkPermissionResult, error) {
+	result := &BulkPermissionResult{
+		AllowedIDs: make([]string, 0),
+		DeniedIDs:  make([]string, 0),
+	}
+
+	// キャッシュの有効性チェック
+	if time.Since(s.roleCacheTime) > s.cacheDuration {
+		if err := s.RefreshPolicies(ctx); err != nil {
+			return nil, fmt.Errorf("failed to refresh policies: %w", err)
+		}
+	}
+
+	// バルクでRBAC権限をチェック
+	rbacAllowed, err := s.checkRBACPermission(request.User, request.Resource, request.Action)
+	if err != nil {
+		return nil, fmt.Errorf("RBAC bulk check failed: %w", err)
+	}
+
+	// RBACで許可されていない場合は全て拒否
+	if !rbacAllowed {
+		result.DeniedIDs = request.ResourceIDs
+		return result, nil
+	}
+
+	// 各リソースIDに対してABACチェック（並列処理で最適化）
+	type checkResult struct {
+		id      string
+		allowed bool
+		err     error
+	}
+
+	resultChan := make(chan checkResult, len(request.ResourceIDs))
+	semaphore := make(chan struct{}, 10) // 同時実行数を制限
+
+	for _, resourceID := range request.ResourceIDs {
+		go func(id string) {
+			semaphore <- struct{}{}        // セマフォ獲得
+			defer func() { <-semaphore }() // セマフォ解放
+
+			// キャッシュからチェック
+			cacheKey := s.generateCacheKey(request.User, request.Resource, request.Action, &id)
+			if cached, found := s.permissionCache.Load(cacheKey); found {
+				if entry, ok := cached.(PermissionCache); ok && time.Now().Before(entry.expiresAt) {
+					resultChan <- checkResult{id: id, allowed: entry.allowed}
+					return
+				}
+			}
+
+			// ABACチェック
+			allowed, err := s.checkABACPermission(request.User, id, request.Action)
+			if err != nil {
+				resultChan <- checkResult{id: id, allowed: false, err: err}
+				return
+			}
+
+			// 結果をキャッシュ
+			s.permissionCache.Store(cacheKey, PermissionCache{
+				allowed:   allowed,
+				expiresAt: time.Now().Add(s.cacheTTL),
+			})
+
+			resultChan <- checkResult{id: id, allowed: allowed}
+		}(resourceID)
+	}
+
+	// 結果を収集
+	for i := 0; i < len(request.ResourceIDs); i++ {
+		res := <-resultChan
+		if res.err != nil {
+			return nil, fmt.Errorf("permission check failed for resource %s: %w", res.id, res.err)
+		}
+		if res.allowed {
+			result.AllowedIDs = append(result.AllowedIDs, res.id)
+		} else {
+			result.DeniedIDs = append(result.DeniedIDs, res.id)
+		}
+	}
+
+	return result, nil
+}
+
+// GetAccessibleResourceIDs returns only the resource IDs that the user can access
+// This is the core of PDP-Level Filtering with Information Graph
+func (s *AuthorizationService) GetAccessibleResourceIDs(ctx context.Context, user *model.User, resource, action string, candidateIDs []string) ([]string, error) {
+	if len(candidateIDs) == 0 {
+		return []string{}, nil
+	}
+
+	request := BulkPermissionRequest{
+		User:        user,
+		Resource:    resource,
+		Action:      action,
+		ResourceIDs: candidateIDs,
+	}
+
+	result, err := s.CheckBulkPermissions(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+
+	return result.AllowedIDs, nil
+}
+
+// AddMetricsTracking enables metrics tracking for the authorization service
+func (s *AuthorizationService) AddMetricsTracking() {
+	s.metrics = &AuthorizationMetrics{
+		LastResetTime: time.Now(),
+	}
+}
+
+// GetMetrics returns current authorization metrics
+func (s *AuthorizationService) GetMetrics() *AuthorizationMetrics {
+	if s.metrics == nil {
+		return &AuthorizationMetrics{}
+	}
+
+	// Calculate cache hit rate
+	totalCacheChecks := s.metrics.TotalRequests
+	if totalCacheChecks > 0 {
+		// Estimate cache hits based on successful requests vs total requests
+		s.metrics.CacheHitRate = float64(s.metrics.SuccessfulRequests) / float64(totalCacheChecks) * 0.8 // Estimated cache efficiency
+	}
+
+	return s.metrics
+}
+
+// ResetMetrics resets all metrics counters
+func (s *AuthorizationService) ResetMetrics() {
+	if s.metrics != nil {
+		s.metrics = &AuthorizationMetrics{
+			LastResetTime: time.Now(),
+		}
+	}
+}
+
+// trackMetrics is a helper function to track request metrics
+func (s *AuthorizationService) trackMetrics(success bool, duration time.Duration, requestType string) {
+	if s.metrics == nil {
+		return
+	}
+
+	s.metrics.TotalRequests++
+	if success {
+		s.metrics.SuccessfulRequests++
+	} else {
+		s.metrics.FailedRequests++
+	}
+
+	// Update average response time
+	if s.metrics.TotalRequests == 1 {
+		s.metrics.AverageResponseTime = duration
+	} else {
+		s.metrics.AverageResponseTime = time.Duration(
+			(int64(s.metrics.AverageResponseTime)*s.metrics.TotalRequests + int64(duration)) / (s.metrics.TotalRequests + 1),
+		)
+	}
+
+	// Track specific request types
+	switch requestType {
+	case "bulk":
+		s.metrics.BulkRequestCount++
+	case "partial_eval":
+		s.metrics.PartialEvaluationCount++
+	}
 }

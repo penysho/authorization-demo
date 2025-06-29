@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"authorization-demo/internal/middleware"
 	"authorization-demo/internal/model"
@@ -290,5 +291,47 @@ func (h *ProductHandler) CheckProductAccess(c *gin.Context) {
 		"action":     action,
 		"allowed":    allowed,
 		"user_id":    user.ID,
+	})
+}
+
+// GetAuthorizationMetrics は認可サービスのメトリクス情報を取得
+func (h *ProductHandler) GetAuthorizationMetrics(c *gin.Context) {
+	// 管理者権限チェック
+	user, exists := middleware.GetUserFromContext(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found in context"})
+		return
+	}
+
+	if user.Role != "admin" && user.Role != "manager" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions to view metrics"})
+		return
+	}
+
+	metrics := h.authService.GetMetrics()
+	c.JSON(http.StatusOK, gin.H{
+		"authorization_metrics": metrics,
+		"generated_at":          time.Now(),
+	})
+}
+
+// ResetAuthorizationMetrics は認可メトリクスをリセット
+func (h *ProductHandler) ResetAuthorizationMetrics(c *gin.Context) {
+	// 管理者権限チェック
+	user, exists := middleware.GetUserFromContext(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found in context"})
+		return
+	}
+
+	if user.Role != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only administrators can reset metrics"})
+		return
+	}
+
+	h.authService.ResetMetrics()
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "Authorization metrics reset successfully",
+		"reset_time": time.Now(),
 	})
 }
