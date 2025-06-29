@@ -303,32 +303,7 @@ func (s *productServiceImpl) SetProductPolicy(ctx context.Context, productID str
 // GetProductPolicy は商品のポリシーを取得
 func (s *productServiceImpl) GetProductPolicy(ctx context.Context, productID string) (*ProductPolicy, error) {
 	// TODO: ポリシーストアから商品固有のポリシーを取得
-	// 現在は簡略化のため、デフォルトポリシーを返す
-	product, err := s.GetProduct(ctx, productID)
-	if err != nil {
-		return nil, err
-	}
-
-	// VIPレベル要件の簡易計算（ハードコードではなく、設定ベース）
-	vipLevel := 0
-	switch product.Category {
-	case "luxury":
-		vipLevel = 3
-	case "exclusive":
-		vipLevel = 5
-	case "vip-only":
-		vipLevel = 2
-	}
-
-	return &ProductPolicy{
-		SubjectRule: fmt.Sprintf("r.sub.Age >= %d", product.AgeLimit),
-		Action:      "read",
-		AgeLimit:    product.AgeLimit,
-		Category:    product.Category,
-		IsAdult:     product.IsAdult,
-		Region:      product.Region,
-		VIPLevel:    vipLevel,
-	}, nil
+	return nil, nil
 }
 
 // CheckProductAccess は商品アクセス権限をチェック

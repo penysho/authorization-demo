@@ -314,8 +314,8 @@ func (s *AuthorizationService) checkABACPermission(user *model.User, resource, a
 func (s *AuthorizationService) AddProductPolicy(ctx context.Context, productID string, policy ProductPolicy, createdBy string) error {
 	rule := PolicyRule{
 		Type:      "abac",
-		Subject:   policy.SubjectRule,
-		Resource:  "product_" + productID,
+		Condition: policy.SubjectRule,
+		Resource:  productID,
 		Action:    policy.Action,
 		Effect:    "allow",
 		CreatedBy: createdBy,
@@ -344,11 +344,7 @@ func (s *AuthorizationService) AddProductPolicy(ctx context.Context, productID s
 type ProductPolicy struct {
 	SubjectRule string `json:"subject_rule"`
 	Action      string `json:"action"`
-	AgeLimit    int    `json:"age_limit"`
-	Category    string `json:"category"`
-	IsAdult     bool   `json:"is_adult"`
-	Region      string `json:"region"`
-	VIPLevel    int    `json:"vip_level"`
+	Condition   string `json:"condition"`
 }
 
 // AddPolicy は新しいポリシーを追加
