@@ -280,10 +280,8 @@ func (s *AuthorizationService) checkRBACPermission(user *model.User, resource, a
 // checkABACPermission はABACによる権限チェック
 func (s *AuthorizationService) checkABACPermission(user *model.User, resource, action string) (bool, error) {
 	// First, try to use the structured policy engine if available
-	if s.policyEngine != nil && strings.HasPrefix(resource, "product_") {
-		// Extract product ID from resource (e.g., "product_123" -> "123")
-		productID := strings.TrimPrefix(resource, "product_")
-		allowed, err := s.policyEngine.EvaluateProductAccess(context.Background(), user, productID, action)
+	if s.policyEngine != nil {
+		allowed, err := s.policyEngine.EvaluateProductAccess(context.Background(), user, resource, action)
 		if err == nil {
 			return allowed, nil
 		}
@@ -344,7 +342,6 @@ func (s *AuthorizationService) AddProductPolicy(ctx context.Context, productID s
 type ProductPolicy struct {
 	SubjectRule string `json:"subject_rule"`
 	Action      string `json:"action"`
-	Condition   string `json:"condition"`
 }
 
 // AddPolicy は新しいポリシーを追加

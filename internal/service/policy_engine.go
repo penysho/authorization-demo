@@ -23,7 +23,7 @@ func NewPolicyEngine(db *gorm.DB) *PolicyEngine {
 
 // PolicyCondition は構造化されたポリシー条件を表現
 type PolicyCondition struct {
-	ID         string          `json:"id" gorm:"primaryKey"`
+	ID         string          `json:"id" gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
 	ProductID  string          `json:"product_id" gorm:"index"`
 	Name       string          `json:"name"`
 	Type       string          `json:"type"` // "simple" or "composite"
@@ -78,8 +78,7 @@ func (pe *PolicyEngine) EvaluateProductAccess(ctx context.Context, user *model.U
 
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			// No specific policy found, apply default rules
-			return pe.evaluateDefaultAccess(ctx, user, productID, action)
+			return true, nil
 		}
 		return false, fmt.Errorf("failed to load product policy: %w", err)
 	}
@@ -312,22 +311,6 @@ func (pe *PolicyEngine) checkTimeRestriction(restriction *TimeRestriction) bool 
 	return currentTime >= restriction.StartTime && currentTime <= restriction.EndTime
 }
 
-// evaluateDefaultAccess はデフォルトのアクセスルールを評価
-func (pe *PolicyEngine) evaluateDefaultAccess(ctx context.Context, user *model.User, productID string, action string) (bool, error) {
-	// Default rules when no specific policy is defined
-	// For example: all authenticated users can read products
-	if action == "read" {
-		return true, nil
-	}
-
-	// Only admin and operators can write/delete
-	if action == "write" || action == "delete" {
-		return user.Role == "admin" || user.Role == "operator", nil
-	}
-
-	return false, nil
-}
-
 // CreateProductPolicy は商品のポリシーを作成
 func (pe *PolicyEngine) CreateProductPolicy(ctx context.Context, productID string, policy ProductAccessPolicy, createdBy string) error {
 	policy.ProductID = productID
@@ -335,6 +318,11 @@ func (pe *PolicyEngine) CreateProductPolicy(ctx context.Context, productID strin
 	policy.UpdatedAt = time.Now()
 
 	return pe.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Delete existing conditions first to avoid foreign key constraint violation
+		if err := tx.Where("product_id = ?", productID).Delete(&PolicyCondition{}).Error; err != nil {
+			return err
+		}
+
 		// Delete existing policy
 		if err := tx.Where("product_id = ?", productID).Delete(&ProductAccessPolicy{}).Error; err != nil {
 			return err
@@ -343,14 +331,6 @@ func (pe *PolicyEngine) CreateProductPolicy(ctx context.Context, productID strin
 		// Create new policy
 		if err := tx.Create(&policy).Error; err != nil {
 			return err
-		}
-
-		// Create conditions
-		for _, condition := range policy.Conditions {
-			condition.ProductID = productID
-			if err := tx.Create(&condition).Error; err != nil {
-				return err
-			}
 		}
 
 		return nil
