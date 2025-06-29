@@ -94,23 +94,6 @@ type AuthorizationService struct {
 	cacheTTL        time.Duration
 }
 
-// PolicyTemplate はポリシーテンプレートを表現
-type PolicyTemplate struct {
-	Name        string            `json:"name"`
-	Description string            `json:"description"`
-	Type        string            `json:"type"` // "rbac" or "abac"
-	Template    string            `json:"template"`
-	Variables   map[string]string `json:"variables"`
-}
-
-// ProductAccessContext は商品アクセス制御のコンテキスト
-type ProductAccessContext struct {
-	UserID    string
-	User      *model.User
-	ProductID string
-	Action    string
-}
-
 // NewAuthorizationService creates a new authorization service
 func NewAuthorizationService(policyStore PolicyStore) (*AuthorizationService, error) {
 	// Casbinエンフォーサーの初期化
