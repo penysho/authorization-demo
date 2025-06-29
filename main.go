@@ -137,6 +137,13 @@ func main() {
 		middleware.RequirePermission(authzService, "policies", "admin"),
 		policyHandler.GetAuditLog)
 
+	// Authorization metrics routes (admin/manager only)
+	api.GET("/authorization/metrics",
+		productHandler.GetAuthorizationMetrics)
+	api.POST("/authorization/metrics/reset",
+		middleware.RequirePermission(authzService, "policies", "admin"),
+		productHandler.ResetAuthorizationMetrics)
+
 	// ヘルスチェックエンドポイント
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
@@ -192,6 +199,10 @@ func main() {
 					"create":      "POST /api/policies",
 					"assign_role": "POST /api/roles/assign",
 					"audit_log":   "GET /api/audit-log",
+				},
+				"authorization": gin.H{
+					"metrics":       "GET /api/authorization/metrics",
+					"reset_metrics": "POST /api/authorization/metrics/reset",
 				},
 			},
 			"abac_examples": gin.H{

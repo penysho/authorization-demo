@@ -362,3 +362,100 @@ func (s *productServiceImpl) deleteProductPolicy(ctx context.Context, productID,
 func generateProductID() string {
 	return fmt.Sprintf("prod_%d", time.Now().UnixNano())
 }
+
+// GetProductsForUserAdvanced はPDP-Level FilteringまたはPartial Evaluationを使用して商品を取得
+func (s *productServiceImpl) GetProductsForUserAdvanced(ctx context.Context, user *model.User, filters ProductFilters, usePartialEvaluation bool) (*PagedProductResponse, error) {
+	// ページング処理のためのデフォルト値設定
+	page := filters.Page
+	if page < 1 {
+		page = 1
+	}
+	limit := filters.Limit
+	if limit < 1 {
+		limit = 10
+	}
+
+	if usePartialEvaluation {
+		// Partial Evaluation パターンを使用
+		return s.getProductsWithPartialEvaluation(ctx, user, filters, page, limit)
+	} else {
+		// PDP-Level Filtering パターンを使用（既存の実装）
+		return s.GetProductsForUser(ctx, user, filters)
+	}
+}
+
+// getProductsWithPartialEvaluation は部分評価を使用して商品を取得
+func (s *productServiceImpl) getProductsWithPartialEvaluation(ctx context.Context, user *model.User, filters ProductFilters, page, limit int) (*PagedProductResponse, error) {
+	// Step 1: 部分評価でSQL条件を生成
+	sqlCondition, bindParams, err := s.authSvc.EvaluateUserAccessSQL(ctx, user, "products", "read")
+	if err != nil {
+		return nil, fmt.Errorf("failed to evaluate partial conditions: %w", err)
+	}
+
+	// Step 2: 基本クエリを構築
+	query := s.db.WithContext(ctx).Model(&model.Product{})
+
+	// Step 3: 部分評価の条件を追加
+	if sqlCondition != "1 = 1" {
+		// Named parameters を使用してバインド
+		query = query.Where(sqlCondition, bindParams)
+	}
+
+	// Step 4: 基本フィルタを適用
+	query = s.applyProductFilters(query, filters)
+
+	// Step 5: 総数を取得
+	var totalCount int64
+	if err := query.Count(&totalCount).Error; err != nil {
+		return nil, fmt.Errorf("failed to count filtered products: %w", err)
+	}
+
+	// Step 6: ページングを適用して結果を取得
+	var products []model.Product
+	offset := (page - 1) * limit
+	if err := query.Order("created_at DESC").Offset(offset).Limit(limit).Find(&products).Error; err != nil {
+		return nil, fmt.Errorf("failed to get products: %w", err)
+	}
+
+	totalPages := int((totalCount + int64(limit) - 1) / int64(limit))
+	if totalPages < 1 {
+		totalPages = 1
+	}
+
+	return &PagedProductResponse{
+		Products:   products,
+		Page:       page,
+		Limit:      limit,
+		TotalPages: totalPages,
+		TotalItems: int(totalCount),
+	}, nil
+}
+
+// applyProductFilters はクエリに商品フィルタを適用
+func (s *productServiceImpl) applyProductFilters(query *gorm.DB, filters ProductFilters) *gorm.DB {
+	if filters.Category != "" {
+		query = query.Where("category = ?", filters.Category)
+	}
+	if filters.MinPrice > 0 {
+		query = query.Where("price >= ?", filters.MinPrice)
+	}
+	if filters.MaxPrice > 0 {
+		query = query.Where("price <= ?", filters.MaxPrice)
+	}
+	if filters.AgeLimit > 0 {
+		query = query.Where("age_limit <= ?", filters.AgeLimit)
+	}
+	if filters.Region != "" {
+		query = query.Where("region LIKE ?", "%"+filters.Region+"%")
+	}
+	if filters.OnlyAdult != nil {
+		query = query.Where("is_adult = ?", *filters.OnlyAdult)
+	}
+	if filters.VIPLevel > 0 {
+		vipCategories := s.getVIPCategories(filters.VIPLevel)
+		if len(vipCategories) > 0 {
+			query = query.Where("category IN ?", vipCategories)
+		}
+	}
+	return query
+}
