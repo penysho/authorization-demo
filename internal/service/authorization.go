@@ -101,6 +101,7 @@ type AuthorizationService struct {
 	policyStore  PolicyStore
 	rbacEnforcer *casbin.Enforcer
 	abacEnforcer *casbin.Enforcer
+	policyEngine *PolicyEngine // 新しい構造化ポリシーエンジン
 
 	// キャッシュ機能
 	lastPolicyRefreshTime time.Time     // ポリシー最終更新時刻
@@ -113,7 +114,7 @@ type AuthorizationService struct {
 }
 
 // NewAuthorizationService creates a new authorization service
-func NewAuthorizationService(policyStore PolicyStore) (*AuthorizationService, error) {
+func NewAuthorizationService(policyStore PolicyStore, policyEngine *PolicyEngine) (*AuthorizationService, error) {
 	// Casbinエンフォーサーの初期化
 	rbacEnforcer, err := casbin.NewEnforcer("config/rbac_model.conf")
 	if err != nil {
@@ -133,6 +134,7 @@ func NewAuthorizationService(policyStore PolicyStore) (*AuthorizationService, er
 		policyStore:           policyStore,
 		rbacEnforcer:          rbacEnforcer,
 		abacEnforcer:          abacEnforcer,
+		policyEngine:          policyEngine,
 		policyRefreshInterval: 10 * time.Minute, // ポリシー再読み込み間隔
 		permissionCacheTTL:    5 * time.Minute,  // 権限チェック結果キャッシュ有効期限
 	}
@@ -277,6 +279,19 @@ func (s *AuthorizationService) checkRBACPermission(user *model.User, resource, a
 
 // checkABACPermission はABACによる権限チェック
 func (s *AuthorizationService) checkABACPermission(user *model.User, resource, action string) (bool, error) {
+	// First, try to use the structured policy engine if available
+	if s.policyEngine != nil && strings.HasPrefix(resource, "product_") {
+		// Extract product ID from resource (e.g., "product_123" -> "123")
+		productID := strings.TrimPrefix(resource, "product_")
+		allowed, err := s.policyEngine.EvaluateProductAccess(context.Background(), user, productID, action)
+		if err == nil {
+			return allowed, nil
+		}
+		// If policy engine fails, fall back to casbin
+		fmt.Printf("Policy engine evaluation failed, falling back to casbin: %v\n", err)
+	}
+
+	// Fallback to casbin ABAC
 	userRequest := &model.UserRequest{
 		ID:       user.ID,
 		Username: user.Username,

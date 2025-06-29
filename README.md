@@ -65,7 +65,6 @@ go run main.go
 ## 設定ファイル
 
 - `config/rbac_model.conf` - RBAC モデル定義
-- `config/rbac_policy.csv` - RBAC ポリシー定義
 - `config/abac_model.conf` - ABAC モデル定義
 
 ## ディレクトリ構成

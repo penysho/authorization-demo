@@ -36,6 +36,11 @@ func main() {
 		log.Fatalf("Failed to migrate product schema: %v", err)
 	}
 
+	// Migrate policy engine tables
+	if err := infrastructure.MigratePolicyEngineSchema(db); err != nil {
+		log.Fatalf("Failed to migrate policy engine schema: %v", err)
+	}
+
 	// Initialize services
 	userService := service.NewUserService(db)
 	authService := service.NewAuthenticationService(userService)
@@ -44,8 +49,11 @@ func main() {
 	// For development with database:
 	policyStore := service.NewDatabasePolicyStore(db)
 
+	// Initialize policy engine
+	policyEngine := service.NewPolicyEngine(db)
+
 	// Initialize authorization service
-	authzService, err := service.NewAuthorizationService(policyStore)
+	authzService, err := service.NewAuthorizationService(policyStore, policyEngine)
 	if err != nil {
 		log.Fatalf("Failed to initialize authorization service: %v", err)
 	}
@@ -73,6 +81,7 @@ func main() {
 	authHandler := handler.NewAuthHandler(authService)
 	productHandler := handler.NewProductHandler(productService, authzService)
 	policyHandler := handler.NewPolicyHandler(authzService)
+	policyAdminHandler := handler.NewPolicyAdminHandler(policyEngine)
 
 	// Setup Gin router
 	r := gin.Default()
@@ -136,6 +145,26 @@ func main() {
 	api.GET("/audit-log",
 		middleware.RequirePermission(authzService, "policies", "admin"),
 		policyHandler.GetAuditLog)
+
+	// Policy admin routes (structured policy management)
+	api.POST("/products/:id/structured-policy",
+		middleware.RequirePermission(authzService, "policies", "admin"),
+		policyAdminHandler.CreateProductPolicy)
+	api.GET("/products/:id/structured-policy",
+		middleware.RequirePermission(authzService, "policies", "admin"),
+		policyAdminHandler.GetProductPolicy)
+	api.POST("/policy/test",
+		middleware.RequirePermission(authzService, "policies", "admin"),
+		policyAdminHandler.TestPolicy)
+	api.GET("/policy/templates",
+		middleware.RequirePermission(authzService, "policies", "admin"),
+		policyAdminHandler.GetPolicyTemplates)
+	api.GET("/policy/operators",
+		middleware.RequirePermission(authzService, "policies", "admin"),
+		policyAdminHandler.GetOperators)
+	api.GET("/policy/attributes",
+		middleware.RequirePermission(authzService, "policies", "admin"),
+		policyAdminHandler.GetAttributes)
 
 	// Authorization metrics routes (admin/manager only)
 	api.GET("/authorization/metrics",

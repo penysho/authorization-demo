@@ -87,6 +87,55 @@ func MigratePolicyStoreSchema(db *gorm.DB) error {
 	return store.AutoMigrate()
 }
 
+// MigratePolicyEngineSchema migrates policy engine tables
+func MigratePolicyEngineSchema(db *gorm.DB) error {
+	// Create product_access_policies table
+	if err := db.AutoMigrate(&service.ProductAccessPolicy{}); err != nil {
+		return fmt.Errorf("failed to migrate ProductAccessPolicy table: %w", err)
+	}
+
+	// Create policy_conditions table
+	if err := db.AutoMigrate(&service.PolicyCondition{}); err != nil {
+		return fmt.Errorf("failed to migrate PolicyCondition table: %w", err)
+	}
+
+	// Create indexes for better performance
+	if err := createPolicyEngineIndexes(db); err != nil {
+		return fmt.Errorf("failed to create policy engine indexes: %w", err)
+	}
+
+	return nil
+}
+
+// createPolicyEngineIndexes creates necessary indexes for policy engine tables
+func createPolicyEngineIndexes(db *gorm.DB) error {
+	// Index for product_access_policies
+	if err := db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_product_access_policies_product_id
+		ON product_access_policies(product_id)
+	`).Error; err != nil {
+		return err
+	}
+
+	// Composite index for policy_conditions
+	if err := db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_policy_conditions_product_enabled
+		ON policy_conditions(product_id, enabled)
+	`).Error; err != nil {
+		return err
+	}
+
+	// Index for policy_conditions priority
+	if err := db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_policy_conditions_priority
+		ON policy_conditions(priority DESC)
+	`).Error; err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // getEnv gets environment variable with fallback
 func getEnv(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
