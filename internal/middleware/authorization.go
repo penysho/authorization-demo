@@ -10,15 +10,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// resolveResource はリクエストパラメータに基づいてリソース名を解決
-func resolveResource(c *gin.Context, resource string) string {
-	// 商品IDが含まれるパスの場合、商品固有のリソース名を生成
-	if productID := c.Param("id"); productID != "" && resource == "products" {
-		return "product_" + productID
-	}
-	return resource
-}
-
 // RequirePermission は認可サービス用のミドルウェアを返す
 func RequirePermission(authzService *service.AuthorizationService, resource, action string) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -30,11 +21,8 @@ func RequirePermission(authzService *service.AuthorizationService, resource, act
 			return
 		}
 
-		// リソース名を動的に解決（例：商品IDが含まれる場合）
-		resolvedResource := resolveResource(c, resource)
-
 		// 権限チェック
-		allowed, err := authzService.CheckPermission(user, resolvedResource, action, nil)
+		allowed, err := authzService.CheckPermission(user, resource, action, nil)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Authorization check failed"})
 			c.Abort()
