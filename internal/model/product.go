@@ -1,41 +1,8 @@
 package model
 
 import (
-	"database/sql/driver"
-	"encoding/json"
 	"time"
 )
-
-// StringSlice はstring配列をJSON形式でDBに保存するためのカスタム型
-type StringSlice []string
-
-// Value はGORMのValuer interfaceを実装
-func (ss StringSlice) Value() (driver.Value, error) {
-	if len(ss) == 0 {
-		return "[]", nil
-	}
-	return json.Marshal(ss)
-}
-
-// Scan はGORMのScanner interfaceを実装
-func (ss *StringSlice) Scan(value interface{}) error {
-	if value == nil {
-		*ss = StringSlice{}
-		return nil
-	}
-
-	var bytes []byte
-	switch v := value.(type) {
-	case []byte:
-		bytes = v
-	case string:
-		bytes = []byte(v)
-	default:
-		return nil
-	}
-
-	return json.Unmarshal(bytes, ss)
-}
 
 // Product は商品情報を表すモデル
 type Product struct {
