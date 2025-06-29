@@ -152,11 +152,7 @@ func (s *AuthorizationService) RefreshPolicies(ctx context.Context) error {
 		case "rbac":
 			s.rbacEnforcer.AddPolicy(policy.Subject, policy.Resource, policy.Action)
 		case "abac":
-			subRule := policy.Condition
-			resource := policy.Resource
-			action := policy.Action
-
-			s.abacEnforcer.AddPolicy(subRule, resource, action)
+			s.abacEnforcer.AddPolicy(policy.Condition, policy.Resource, policy.Action)
 		}
 	}
 
