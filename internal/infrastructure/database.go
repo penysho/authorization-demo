@@ -1,7 +1,7 @@
 package infrastructure
 
 import (
-	"authorization-demo/internal/service"
+	"authorization-demo/internal/model"
 	"fmt"
 	"log"
 	"os"
@@ -84,21 +84,21 @@ func ConnectDatabase(config *DatabaseConfig) (*gorm.DB, error) {
 // MigratePolicyStoreSchema performs database migration for policy store
 func MigratePolicyStoreSchema(db *gorm.DB) error {
 	return db.AutoMigrate(
-		&service.CasbinPolicyRuleDB{},
-		&service.CasbinRoleAssignmentDB{},
-		&service.PolicyChangeDB{},
+		&model.CasbinPolicyRuleDB{},
+		&model.CasbinRoleAssignmentDB{},
+		&model.PolicyChangeDB{},
 	)
 }
 
 // MigratePolicyEngineSchema migrates policy engine tables
 func MigratePolicyEngineSchema(db *gorm.DB) error {
 	// Create product_access_policies table
-	if err := db.AutoMigrate(&service.ProductAccessPolicy{}); err != nil {
+	if err := db.AutoMigrate(&model.ProductAccessPolicy{}); err != nil {
 		return fmt.Errorf("failed to migrate ProductAccessPolicy table: %w", err)
 	}
 
 	// Create policy_conditions table
-	if err := db.AutoMigrate(&service.PolicyCondition{}); err != nil {
+	if err := db.AutoMigrate(&model.PolicyCondition{}); err != nil {
 		return fmt.Errorf("failed to migrate PolicyCondition table: %w", err)
 	}
 

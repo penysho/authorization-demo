@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"authorization-demo/internal/middleware"
+	"authorization-demo/internal/model"
 	"authorization-demo/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -86,7 +87,7 @@ func (h *StructuredPolicyHandler) CreateProductPolicy(c *gin.Context) {
 	}
 
 	// Convert request to service model
-	policy := service.ProductAccessPolicy{
+	policy := model.ProductAccessPolicy{
 		ProductID:  productID,
 		PolicyType: req.PolicyType,
 		CreatedBy:  user.ID,
@@ -94,9 +95,9 @@ func (h *StructuredPolicyHandler) CreateProductPolicy(c *gin.Context) {
 	}
 
 	// Convert conditions
-	conditions := make([]service.PolicyCondition, len(req.Conditions))
+	conditions := make([]model.PolicyCondition, len(req.Conditions))
 	for i, condReq := range req.Conditions {
-		condition := service.PolicyCondition{
+		condition := model.PolicyCondition{
 			Name:      condReq.Name,
 			Type:      condReq.Type,
 			LogicalOp: condReq.LogicalOp,
@@ -106,9 +107,9 @@ func (h *StructuredPolicyHandler) CreateProductPolicy(c *gin.Context) {
 
 		// Convert simple conditions to JSON
 		if condReq.Type == "simple" {
-			simpleConditions := make([]service.SimpleCondition, len(condReq.Conditions))
+			simpleConditions := make([]model.SimpleCondition, len(condReq.Conditions))
 			for j, sc := range condReq.Conditions {
-				simpleConditions[j] = service.SimpleCondition{
+				simpleConditions[j] = model.SimpleCondition{
 					Attribute: sc.Attribute,
 					Operator:  sc.Operator,
 					Value:     sc.Value,

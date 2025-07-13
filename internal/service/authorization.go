@@ -267,7 +267,7 @@ func (s *AuthorizationService) checkABACPermission(user *model.User, resource, a
 
 // AddProductPolicy は商品固有のポリシーを追加
 func (s *AuthorizationService) AddProductPolicy(ctx context.Context, productID string, policy ProductPolicy, createdBy string) error {
-	rule := PolicyRule{
+	rule := model.PolicyRule{
 		Type:      "abac",
 		Condition: policy.SubjectRule,
 		Resource:  productID,
@@ -281,7 +281,7 @@ func (s *AuthorizationService) AddProductPolicy(ctx context.Context, productID s
 	}
 
 	// 監査ログの記録
-	change := PolicyChange{
+	change := model.PolicyChange{
 		Type:      "product_policy_add",
 		After:     rule,
 		ChangedBy: createdBy,
@@ -304,7 +304,7 @@ type ProductPolicy struct {
 
 // AddPolicy は新しいポリシーを追加
 func (s *AuthorizationService) AddPolicy(ctx context.Context, policyType, subject, resource, action, createdBy string) error {
-	rule := PolicyRule{
+	rule := model.PolicyRule{
 		Type:      policyType,
 		Subject:   subject,
 		Resource:  resource,
@@ -318,7 +318,7 @@ func (s *AuthorizationService) AddPolicy(ctx context.Context, policyType, subjec
 	}
 
 	// 監査ログの記録
-	change := PolicyChange{
+	change := model.PolicyChange{
 		Type:      "policy_add",
 		After:     rule,
 		ChangedBy: createdBy,
@@ -342,7 +342,7 @@ func (s *AuthorizationService) RemovePolicy(ctx context.Context, policyID, delet
 		return fmt.Errorf("failed to load policies: %w", err)
 	}
 
-	var targetPolicy *PolicyRule
+	var targetPolicy *model.PolicyRule
 	for _, policy := range policies {
 		if policy.ID == policyID {
 			targetPolicy = &policy
@@ -359,7 +359,7 @@ func (s *AuthorizationService) RemovePolicy(ctx context.Context, policyID, delet
 	}
 
 	// 監査ログの記録
-	change := PolicyChange{
+	change := model.PolicyChange{
 		Type:      "policy_delete",
 		Before:    *targetPolicy,
 		ChangedBy: deletedBy,
@@ -381,9 +381,9 @@ func (s *AuthorizationService) AssignRole(ctx context.Context, userID, role, ass
 	}
 
 	// 監査ログの記録
-	change := PolicyChange{
+	change := model.PolicyChange{
 		Type: "role_assign",
-		After: RoleAssignment{
+		After: model.RoleAssignment{
 			UserID: userID,
 			Role:   role,
 		},
@@ -400,12 +400,12 @@ func (s *AuthorizationService) AssignRole(ctx context.Context, userID, role, ass
 }
 
 // GetAuditLog は監査ログを取得
-func (s *AuthorizationService) GetAuditLog(ctx context.Context, from, to time.Time) ([]PolicyChange, error) {
+func (s *AuthorizationService) GetAuditLog(ctx context.Context, from, to time.Time) ([]model.PolicyChange, error) {
 	return s.casbinPolicyStore.GetAuditLog(ctx, from, to)
 }
 
 // ValidatePolicy はポリシーの妥当性を検証
-func (s *AuthorizationService) ValidatePolicy(rule PolicyRule) error {
+func (s *AuthorizationService) ValidatePolicy(rule model.PolicyRule) error {
 	if rule.Subject == "" {
 		return fmt.Errorf("subject cannot be empty")
 	}

@@ -21,56 +21,10 @@ func NewPolicyEngine(db *gorm.DB) *PolicyEngine {
 	return &PolicyEngine{db: db}
 }
 
-// PolicyCondition は構造化されたポリシー条件を表現
-type PolicyCondition struct {
-	ID         string          `json:"id" gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
-	ProductID  string          `json:"product_id" gorm:"index"`
-	Name       string          `json:"name"`
-	Type       string          `json:"type"` // "simple" or "composite"
-	Conditions json.RawMessage `json:"conditions" gorm:"type:jsonb"`
-	LogicalOp  string          `json:"logical_op,omitempty"` // "AND" or "OR"
-	Priority   int             `json:"priority" gorm:"default:0"`
-	Enabled    bool            `json:"enabled" gorm:"default:true"`
-	CreatedAt  time.Time       `json:"created_at"`
-	UpdatedAt  time.Time       `json:"updated_at"`
-}
-
-// SimpleCondition は単一の条件を表現
-type SimpleCondition struct {
-	Attribute string      `json:"attribute"` // e.g., "age", "location", "vip_level"
-	Operator  string      `json:"operator"`  // e.g., ">=", "==", "in", "contains"
-	Value     interface{} `json:"value"`     // e.g., 18, ["JP", "US"], true
-}
-
-// ProductAccessPolicy は商品のアクセスポリシー
-type ProductAccessPolicy struct {
-	ProductID    string            `json:"product_id" gorm:"primaryKey"`
-	PolicyType   string            `json:"policy_type"` // "allow" or "deny"
-	Conditions   []PolicyCondition `json:"-" gorm:"foreignKey:ProductID;references:ProductID"`
-	Restrictions json.RawMessage   `json:"restrictions" gorm:"type:jsonb"`
-	CreatedBy    string            `json:"created_by"`
-	UpdatedAt    time.Time         `json:"updated_at"`
-}
-
-// PolicyRestrictions は追加の制限事項
-type PolicyRestrictions struct {
-	TimeRestrictions   *TimeRestriction `json:"time_restrictions,omitempty"`
-	DeviceRestrictions []string         `json:"device_restrictions,omitempty"`
-	IPRestrictions     []string         `json:"ip_restrictions,omitempty"`
-}
-
-// TimeRestriction は時間帯制限
-type TimeRestriction struct {
-	StartTime  string   `json:"start_time"`   // "09:00"
-	EndTime    string   `json:"end_time"`     // "18:00"
-	DaysOfWeek []string `json:"days_of_week"` // ["Mon", "Tue", "Wed", "Thu", "Fri"]
-	Timezone   string   `json:"timezone"`     // "Asia/Tokyo"
-}
-
 // EvaluateProductAccess は商品へのアクセス可否を評価
 func (pe *PolicyEngine) EvaluateProductAccess(ctx context.Context, user *model.User, productID string, action string) (bool, error) {
 	// Get product access policy
-	var policy ProductAccessPolicy
+	var policy model.ProductAccessPolicy
 	err := pe.db.WithContext(ctx).
 		Where("product_id = ?", productID).
 		Preload("Conditions", "enabled = ?", true).
@@ -119,10 +73,10 @@ func (pe *PolicyEngine) EvaluateProductAccess(ctx context.Context, user *model.U
 }
 
 // evaluateCondition は単一の条件を評価
-func (pe *PolicyEngine) evaluateCondition(ctx context.Context, user *model.User, condition PolicyCondition) (bool, error) {
+func (pe *PolicyEngine) evaluateCondition(ctx context.Context, user *model.User, condition model.PolicyCondition) (bool, error) {
 	if condition.Type == "composite" {
 		// Handle composite conditions
-		var subConditions []PolicyCondition
+		var subConditions []model.PolicyCondition
 		if err := json.Unmarshal(condition.Conditions, &subConditions); err != nil {
 			return false, fmt.Errorf("failed to unmarshal sub-conditions: %w", err)
 		}
@@ -155,7 +109,7 @@ func (pe *PolicyEngine) evaluateCondition(ctx context.Context, user *model.User,
 	}
 
 	// Handle simple conditions
-	var simpleConditions []SimpleCondition
+	var simpleConditions []model.SimpleCondition
 	if err := json.Unmarshal(condition.Conditions, &simpleConditions); err != nil {
 		return false, fmt.Errorf("failed to unmarshal simple conditions: %w", err)
 	}
@@ -171,7 +125,7 @@ func (pe *PolicyEngine) evaluateCondition(ctx context.Context, user *model.User,
 }
 
 // evaluateSimpleCondition は単純な条件を評価
-func (pe *PolicyEngine) evaluateSimpleCondition(user *model.User, condition SimpleCondition) bool {
+func (pe *PolicyEngine) evaluateSimpleCondition(user *model.User, condition model.SimpleCondition) bool {
 	switch condition.Attribute {
 	case "age":
 		return pe.evaluateNumericCondition(float64(user.Age), condition.Operator, condition.Value)
@@ -269,7 +223,7 @@ func (pe *PolicyEngine) evaluateBooleanCondition(userValue bool, operator string
 
 // checkRestrictions は追加の制限をチェック
 func (pe *PolicyEngine) checkRestrictions(ctx context.Context, user *model.User, restrictionsData json.RawMessage) (bool, error) {
-	var restrictions PolicyRestrictions
+	var restrictions model.PolicyRestrictions
 	if err := json.Unmarshal(restrictionsData, &restrictions); err != nil {
 		return false, fmt.Errorf("failed to unmarshal restrictions: %w", err)
 	}
@@ -287,7 +241,7 @@ func (pe *PolicyEngine) checkRestrictions(ctx context.Context, user *model.User,
 }
 
 // checkTimeRestriction は時間制限をチェック
-func (pe *PolicyEngine) checkTimeRestriction(restriction *TimeRestriction) bool {
+func (pe *PolicyEngine) checkTimeRestriction(restriction *model.TimeRestriction) bool {
 	// Implementation of time restriction check
 	// This is a simplified version - in production, you'd want proper timezone handling
 	now := time.Now()
@@ -312,19 +266,19 @@ func (pe *PolicyEngine) checkTimeRestriction(restriction *TimeRestriction) bool 
 }
 
 // CreateProductPolicy は商品のポリシーを作成
-func (pe *PolicyEngine) CreateProductPolicy(ctx context.Context, productID string, policy ProductAccessPolicy, createdBy string) error {
+func (pe *PolicyEngine) CreateProductPolicy(ctx context.Context, productID string, policy model.ProductAccessPolicy, createdBy string) error {
 	policy.ProductID = productID
 	policy.CreatedBy = createdBy
 	policy.UpdatedAt = time.Now()
 
 	return pe.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Delete existing conditions first to avoid foreign key constraint violation
-		if err := tx.Where("product_id = ?", productID).Delete(&PolicyCondition{}).Error; err != nil {
+		if err := tx.Where("product_id = ?", productID).Delete(&model.PolicyCondition{}).Error; err != nil {
 			return err
 		}
 
 		// Delete existing policy
-		if err := tx.Where("product_id = ?", productID).Delete(&ProductAccessPolicy{}).Error; err != nil {
+		if err := tx.Where("product_id = ?", productID).Delete(&model.ProductAccessPolicy{}).Error; err != nil {
 			return err
 		}
 
@@ -338,8 +292,8 @@ func (pe *PolicyEngine) CreateProductPolicy(ctx context.Context, productID strin
 }
 
 // GetProductPolicy は商品のポリシーを取得
-func (pe *PolicyEngine) GetProductPolicy(ctx context.Context, productID string) (*ProductAccessPolicy, error) {
-	var policy ProductAccessPolicy
+func (pe *PolicyEngine) GetProductPolicy(ctx context.Context, productID string) (*model.ProductAccessPolicy, error) {
+	var policy model.ProductAccessPolicy
 	err := pe.db.WithContext(ctx).
 		Where("product_id = ?", productID).
 		Preload("Conditions").

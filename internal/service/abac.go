@@ -22,7 +22,7 @@ type ABACEngine interface {
 	Initialize(ctx context.Context) error
 
 	// RefreshPolicies refreshes the policies in the engine
-	RefreshPolicies(ctx context.Context, policies []PolicyRule) error
+	RefreshPolicies(ctx context.Context, policies []model.PolicyRule) error
 }
 
 // CasbinABACEngine implements ABACEngine using Casbin
@@ -78,7 +78,7 @@ func (e *CasbinABACEngine) Initialize(ctx context.Context) error {
 }
 
 // RefreshPolicies refreshes policies in Casbin enforcer
-func (e *CasbinABACEngine) RefreshPolicies(ctx context.Context, policies []PolicyRule) error {
+func (e *CasbinABACEngine) RefreshPolicies(ctx context.Context, policies []model.PolicyRule) error {
 	e.enforcer.ClearPolicy()
 
 	for _, policy := range policies {
@@ -131,7 +131,7 @@ func (e *StructuredPolicyABACEngine) Initialize(ctx context.Context) error {
 }
 
 // RefreshPolicies refreshes policies in structured policy engine
-func (e *StructuredPolicyABACEngine) RefreshPolicies(ctx context.Context, policies []PolicyRule) error {
+func (e *StructuredPolicyABACEngine) RefreshPolicies(ctx context.Context, policies []model.PolicyRule) error {
 	// The structured policy engine manages its own policies
 	// This method can be used for any necessary policy refresh logic
 	return nil

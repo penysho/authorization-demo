@@ -555,7 +555,7 @@ func setupInitialPolicies(store service.CasbinPolicyStore, userService service.U
 	ctx := context.Background()
 
 	// RBAC policies
-	policies := []service.PolicyRule{
+	policies := []model.PolicyRule{
 		{
 			Type:     "rbac",
 			Subject:  "admin",
@@ -607,11 +607,11 @@ func setupInitialPolicies(store service.CasbinPolicyStore, userService service.U
 		},
 	}
 
-	abacPolicies := make([]service.PolicyRule, 0, len(sampleProducts))
+	abacPolicies := make([]model.PolicyRule, 0, len(sampleProducts))
 	for _, product := range sampleProducts {
 		// 仮のABACポリシー
 		if product.IsAdult {
-			abacPolicies = append(abacPolicies, service.PolicyRule{
+			abacPolicies = append(abacPolicies, model.PolicyRule{
 				Type:      "abac",
 				Condition: "r.sub.Age >= 18",
 				Resource:  product.ID,
@@ -619,7 +619,7 @@ func setupInitialPolicies(store service.CasbinPolicyStore, userService service.U
 				Effect:    "allow",
 			})
 		} else {
-			abacPolicies = append(abacPolicies, service.PolicyRule{
+			abacPolicies = append(abacPolicies, model.PolicyRule{
 				Type:      "abac",
 				Condition: "r.sub.Age >= 0",
 				Resource:  product.ID,

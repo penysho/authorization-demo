@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"authorization-demo/internal/model"
 	"authorization-demo/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -236,7 +237,7 @@ func (h *CasbinPolicyHandler) RefreshPolicies(c *gin.Context) {
 
 // ValidatePolicy はポリシーの妥当性を検証
 func (h *CasbinPolicyHandler) ValidatePolicy(c *gin.Context) {
-	var rule service.PolicyRule
+	var rule model.PolicyRule
 	if err := c.ShouldBindJSON(&rule); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   "Invalid policy format",
