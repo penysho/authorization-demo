@@ -10,6 +10,14 @@ import (
 	"github.com/casbin/casbin/v2"
 )
 
+// ABACEngineType represents the type of ABAC engine to use
+type ABACEngineType string
+
+const (
+	ABACEngineTypeCasbin     ABACEngineType = "casbin"
+	ABACEngineTypeStructured ABACEngineType = "structured"
+)
+
 // ABACEngine defines the interface for ABAC (Attribute-Based Access Control) engines
 type ABACEngine interface {
 	// EvaluatePermission evaluates whether a user has permission to perform an action on a resource
@@ -136,14 +144,6 @@ func (e *StructuredPolicyABACEngine) RefreshPolicies(ctx context.Context, polici
 	// This method can be used for any necessary policy refresh logic
 	return nil
 }
-
-// ABACEngineType represents the type of ABAC engine to use
-type ABACEngineType string
-
-const (
-	ABACEngineTypeCasbin     ABACEngineType = "casbin"
-	ABACEngineTypeStructured ABACEngineType = "structured"
-)
 
 // カスタム関数: 文字列に部分文字列が含まれているかチェック
 func stringContainsFunc(args ...interface{}) (interface{}, error) {

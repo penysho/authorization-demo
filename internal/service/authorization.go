@@ -24,7 +24,7 @@ type AuthorizationConfig struct {
 // DefaultAuthorizationConfig returns default configuration
 func DefaultAuthorizationConfig() *AuthorizationConfig {
 	return &AuthorizationConfig{
-		ABACEngineType:        ABACEngineTypeCasbin, // Default to Casbin for backward compatibility
+		ABACEngineType:        ABACEngineTypeStructured,
 		RBACConfigPath:        "config/rbac_model.conf",
 		ABACConfigPath:        "config/abac_model.conf",
 		PolicyRefreshInterval: 10 * time.Minute,
