@@ -8,7 +8,8 @@ import (
 // PolicyCondition represents a structured policy condition
 type PolicyCondition struct {
 	ID         string          `json:"id" gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
-	ProductID  string          `json:"product_id" gorm:"index"`
+	ProductID  string          `json:"product_id" gorm:"type:varchar(36);not null;index"`
+	Product    *Product        `json:"product,omitempty" gorm:"foreignKey:ProductID;references:ID;constraint:OnDelete:CASCADE"`
 	Name       string          `json:"name"`
 	Type       string          `json:"type"` // "simple" or "composite"
 	Conditions json.RawMessage `json:"conditions" gorm:"type:jsonb"`
@@ -28,9 +29,10 @@ type SimpleCondition struct {
 
 // ProductAccessPolicy represents product access policy
 type ProductAccessPolicy struct {
-	ProductID    string            `json:"product_id" gorm:"primaryKey"`
+	ProductID    string            `json:"product_id" gorm:"type:varchar(36);primaryKey"`
+	Product      *Product          `json:"product,omitempty" gorm:"foreignKey:ProductID;references:ID;constraint:OnDelete:CASCADE"`
 	PolicyType   string            `json:"policy_type"` // "allow" or "deny"
-	Conditions   []PolicyCondition `json:"-" gorm:"foreignKey:ProductID;references:ProductID"`
+	Conditions   []PolicyCondition `json:"conditions,omitempty" gorm:"foreignKey:ProductID;references:ProductID"`
 	Restrictions json.RawMessage   `json:"restrictions" gorm:"type:jsonb"`
 	CreatedBy    string            `json:"created_by"`
 	UpdatedAt    time.Time         `json:"updated_at"`
