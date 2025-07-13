@@ -8,34 +8,21 @@ import (
 	"authorization-demo/internal/handler"
 	"authorization-demo/internal/infrastructure"
 	"authorization-demo/internal/middleware"
-	"authorization-demo/internal/model"
 	"authorization-demo/internal/service"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
 func main() {
 	// Initialize database connection
-	dbConfig := infrastructure.DefaultDatabaseConfig()
-	db, err := infrastructure.ConnectDatabase(dbConfig)
+	db, err := infrastructure.ConnectDatabase(infrastructure.DefaultDatabaseConfig())
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 
-	// Perform database migration
-	if err := infrastructure.MigratePolicyStoreSchema(db); err != nil {
-		log.Fatalf("Failed to migrate database schema: %v", err)
-	}
-
-	// Migrate product tables
-	if err := migrateProductSchema(db); err != nil {
-		log.Fatalf("Failed to migrate product schema: %v", err)
-	}
-
-	// Migrate policy engine tables
-	if err := infrastructure.MigratePolicyEngineSchema(db); err != nil {
-		log.Fatalf("Failed to migrate policy engine schema: %v", err)
+	// Perform all database migrations
+	if err := infrastructure.MigrateAllSchemas(db); err != nil {
+		log.Fatalf("Failed to migrate database schemas: %v", err)
 	}
 
 	// Initialize services
@@ -316,9 +303,4 @@ func main() {
 	log.Printf("Features: RBAC + ABAC with age/region/VIP/time-based restrictions")
 	log.Printf("Access http://localhost:%s for API documentation", port)
 	log.Fatal(http.ListenAndServe(":"+port, r))
-}
-
-// migrateProductSchema は商品テーブルのマイグレーションを実行
-func migrateProductSchema(db *gorm.DB) error {
-	return db.AutoMigrate(&model.Product{}, &model.User{})
 }

@@ -139,6 +139,26 @@ func createPolicyEngineIndexes(db *gorm.DB) error {
 	return nil
 }
 
+// MigrateAllSchemas performs all database migrations in the correct order
+func MigrateAllSchemas(db *gorm.DB) error {
+	// Migrate core models (User, Product)
+	if err := db.AutoMigrate(&model.User{}, &model.Product{}); err != nil {
+		return fmt.Errorf("failed to migrate core schemas: %w", err)
+	}
+
+	// Migrate policy store schemas
+	if err := MigratePolicyStoreSchema(db); err != nil {
+		return fmt.Errorf("failed to migrate policy store schema: %w", err)
+	}
+
+	// Migrate policy engine schemas
+	if err := MigratePolicyEngineSchema(db); err != nil {
+		return fmt.Errorf("failed to migrate policy engine schema: %w", err)
+	}
+
+	return nil
+}
+
 // getEnv gets environment variable with fallback
 func getEnv(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
