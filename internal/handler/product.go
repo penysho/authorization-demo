@@ -94,10 +94,21 @@ func (h *ProductHandler) GetProducts(c *gin.Context) {
 // GetProduct は指定された商品を取得
 func (h *ProductHandler) GetProduct(c *gin.Context) {
 	// ミドルウェアで既にアクセス権限がチェック済み
-	// コンテキストから商品情報を取得
-	product, exists := middleware.GetProductFromContext(c)
-	if !exists {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Product not found in context"})
+	// 商品IDを取得
+	productID := c.Param("id")
+	if productID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Product ID is required"})
+		return
+	}
+
+	// 商品情報を取得
+	product, err := h.productService.GetProduct(c.Request.Context(), productID)
+	if err != nil {
+		if err.Error() == "product not found" {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get product"})
+		}
 		return
 	}
 

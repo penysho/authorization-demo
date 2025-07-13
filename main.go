@@ -105,16 +105,16 @@ func main() {
 
 	// Product routes with ABAC support
 	api.GET("/products",
-		middleware.RequireBulkProductAccess(authzService, "read"),
+		middleware.RequirePermission(authzService, "products", "read"),
 		productHandler.GetProducts)
 	api.GET("/products/:id",
-		middleware.RequireProductAccess(authzService, productService, "read"),
+		middleware.RequirePermission(authzService, "products", "read"),
 		productHandler.GetProduct)
 	api.PUT("/products/:id",
-		middleware.RequireProductAccess(authzService, productService, "write"),
+		middleware.RequirePermission(authzService, "products", "write"),
 		productHandler.UpdateProduct)
 	api.DELETE("/products/:id",
-		middleware.RequireProductAccess(authzService, productService, "delete"),
+		middleware.RequirePermission(authzService, "products", "delete"),
 		productHandler.DeleteProduct)
 	api.POST("/products",
 		middleware.RequirePermission(authzService, "products", "write"),
@@ -129,7 +129,7 @@ func main() {
 		middleware.RequirePermission(authzService, "policies", "admin"),
 		productHandler.GetProductPolicy)
 	casbinAPI.GET("/products/:id/access",
-		middleware.RequireBulkProductAccess(authzService, "read"),
+		middleware.RequirePermission(authzService, "products", "read"),
 		productHandler.CheckProductAccess)
 	casbinAPI.POST("/policies",
 		middleware.RequirePermission(authzService, "policies", "admin"),
