@@ -55,9 +55,9 @@ type TimeRestriction struct {
 
 // Common resource types
 const (
-	ResourceTypeProduct  = "product"
-	ResourceTypeOrder    = "order"
-	ResourceTypeCustomer = "customer"
-	ResourceTypeInvoice  = "invoice"
-	ResourceTypeReport   = "report"
+	ResourceTypeProducts  = "products"
+	ResourceTypeOrders    = "orders"
+	ResourceTypeCustomers = "customers"
+	ResourceTypeInvoices  = "invoices"
+	ResourceTypeReports   = "reports"
 )

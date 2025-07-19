@@ -133,19 +133,19 @@ func (pe *PolicyEngine) evaluateCondition(ctx context.Context, user *model.User,
 // loadResourceData loads the resource data based on type
 func (pe *PolicyEngine) loadResourceData(ctx context.Context, resourceType, resourceID string) (interface{}, error) {
 	switch resourceType {
-	case model.ResourceTypeProduct:
+	case model.ResourceTypeProducts:
 		var product model.Product
 		if err := pe.db.WithContext(ctx).Where("id = ?", resourceID).First(&product).Error; err != nil {
 			return nil, err
 		}
 		return &product, nil
-	case model.ResourceTypeOrder:
+	case model.ResourceTypeOrders:
 		var order model.Order
 		if err := pe.db.WithContext(ctx).Where("id = ?", resourceID).First(&order).Error; err != nil {
 			return nil, err
 		}
 		return &order, nil
-	case model.ResourceTypeCustomer:
+	case model.ResourceTypeCustomers:
 		var customer model.Customer
 		if err := pe.db.WithContext(ctx).Where("id = ?", resourceID).First(&customer).Error; err != nil {
 			return nil, err
@@ -174,15 +174,15 @@ func (pe *PolicyEngine) evaluateSimpleCondition(user *model.User, resourceType s
 
 	// Then, try resource-specific attributes
 	switch resourceType {
-	case model.ResourceTypeProduct:
+	case model.ResourceTypeProducts:
 		if product, ok := resourceData.(*model.Product); ok {
 			return pe.evaluateProductAttribute(product, condition)
 		}
-	case model.ResourceTypeOrder:
+	case model.ResourceTypeOrders:
 		if order, ok := resourceData.(*model.Order); ok {
 			return pe.evaluateOrderAttribute(order, condition)
 		}
-	case model.ResourceTypeCustomer:
+	case model.ResourceTypeCustomers:
 		if customer, ok := resourceData.(*model.Customer); ok {
 			return pe.evaluateCustomerAttribute(customer, condition)
 		}
