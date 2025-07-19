@@ -321,24 +321,226 @@ func (pe *PolicyEngine) CreateResourcePolicy(ctx context.Context, resourceType, 
 	policy.CreatedBy = createdBy
 	policy.UpdatedAt = time.Now()
 
+	// Validate policy before creation
+	if err := pe.validateResourcePolicy(&policy); err != nil {
+		return fmt.Errorf("policy validation failed: %w", err)
+	}
+
 	return pe.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Delete existing conditions first to avoid foreign key constraint violation
 		if err := tx.Where("resource_type = ? AND resource_id = ?", resourceType, resourceID).Delete(&model.PolicyCondition{}).Error; err != nil {
-			return err
+			return fmt.Errorf("failed to delete existing conditions: %w", err)
 		}
 
 		// Delete existing policy
 		if err := tx.Where("resource_type = ? AND resource_id = ?", resourceType, resourceID).Delete(&model.ResourceAccessPolicy{}).Error; err != nil {
-			return err
+			return fmt.Errorf("failed to delete existing policy: %w", err)
 		}
 
 		// Create new policy
 		if err := tx.Create(&policy).Error; err != nil {
-			return err
+			return fmt.Errorf("failed to create policy: %w", err)
+		}
+
+		// Process and create conditions
+		for i := range policy.Conditions {
+			condition := &policy.Conditions[i]
+			condition.ResourceType = resourceType
+			condition.ResourceID = resourceID
+
+			if err := pe.processAndCreateCondition(tx, condition); err != nil {
+				return fmt.Errorf("failed to process condition %s: %w", condition.Name, err)
+			}
 		}
 
 		return nil
 	})
+}
+
+// processAndCreateCondition processes and creates a condition, handling composite conditions recursively
+func (pe *PolicyEngine) processAndCreateCondition(tx *gorm.DB, condition *model.PolicyCondition) error {
+	// Validate condition before processing
+	if err := pe.validateCondition(condition); err != nil {
+		return fmt.Errorf("condition validation failed: %w", err)
+	}
+
+	// For composite conditions, we need to validate and potentially modify sub-conditions
+	if condition.Type == "composite" {
+		if err := pe.processCompositeCondition(condition); err != nil {
+			return fmt.Errorf("failed to process composite condition: %w", err)
+		}
+	}
+
+	// Create the condition in database
+	if err := tx.Create(condition).Error; err != nil {
+		return fmt.Errorf("failed to create condition in database: %w", err)
+	}
+
+	return nil
+}
+
+// processCompositeCondition processes and validates composite conditions
+func (pe *PolicyEngine) processCompositeCondition(condition *model.PolicyCondition) error {
+	var subConditions []model.PolicyCondition
+	if err := json.Unmarshal(condition.Conditions, &subConditions); err != nil {
+		return fmt.Errorf("failed to unmarshal sub-conditions: %w", err)
+	}
+
+	// Validate and process each sub-condition
+	for i := range subConditions {
+		subCondition := &subConditions[i]
+
+		// Inherit resource information from parent
+		subCondition.ResourceType = condition.ResourceType
+		subCondition.ResourceID = condition.ResourceID
+
+		// Validate sub-condition
+		if err := pe.validateCondition(subCondition); err != nil {
+			return fmt.Errorf("sub-condition validation failed: %w", err)
+		}
+
+		// Recursively process composite sub-conditions
+		if subCondition.Type == "composite" {
+			if err := pe.processCompositeCondition(subCondition); err != nil {
+				return fmt.Errorf("failed to process nested composite condition: %w", err)
+			}
+		}
+	}
+
+	// Re-marshal the processed sub-conditions
+	processedConditions, err := json.Marshal(subConditions)
+	if err != nil {
+		return fmt.Errorf("failed to marshal processed sub-conditions: %w", err)
+	}
+	condition.Conditions = processedConditions
+
+	return nil
+}
+
+// validateResourcePolicy validates the entire resource policy
+func (pe *PolicyEngine) validateResourcePolicy(policy *model.ResourceAccessPolicy) error {
+	// Validate policy type
+	if policy.PolicyType != "allow" && policy.PolicyType != "deny" {
+		return fmt.Errorf("invalid policy type: %s (must be 'allow' or 'deny')", policy.PolicyType)
+	}
+
+	// Validate resource type
+	validResourceTypes := []string{
+		model.ResourceTypeProducts,
+		model.ResourceTypeOrders,
+		model.ResourceTypeCustomers,
+		model.ResourceTypeInvoices,
+		model.ResourceTypeReports,
+	}
+
+	valid := false
+	for _, validType := range validResourceTypes {
+		if policy.ResourceType == validType {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return fmt.Errorf("invalid resource type: %s", policy.ResourceType)
+	}
+
+	// Validate conditions
+	for _, condition := range policy.Conditions {
+		if err := pe.validateCondition(&condition); err != nil {
+			return fmt.Errorf("condition validation failed: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// validateCondition validates a single condition
+func (pe *PolicyEngine) validateCondition(condition *model.PolicyCondition) error {
+	// Validate condition type
+	if condition.Type != "simple" && condition.Type != "composite" {
+		return fmt.Errorf("invalid condition type: %s (must be 'simple' or 'composite')", condition.Type)
+	}
+
+	// Validate logical operator for composite conditions
+	if condition.Type == "composite" {
+		if condition.LogicalOp != "AND" && condition.LogicalOp != "OR" {
+			return fmt.Errorf("invalid logical operator for composite condition: %s (must be 'AND' or 'OR')", condition.LogicalOp)
+		}
+	}
+
+	// Validate condition content based on type
+	if condition.Type == "simple" {
+		return pe.validateSimpleCondition(condition)
+	} else {
+		return pe.validateCompositeConditionStructure(condition)
+	}
+}
+
+// validateSimpleCondition validates simple condition structure
+func (pe *PolicyEngine) validateSimpleCondition(condition *model.PolicyCondition) error {
+	var simpleConditions []model.SimpleCondition
+	if err := json.Unmarshal(condition.Conditions, &simpleConditions); err != nil {
+		return fmt.Errorf("failed to unmarshal simple conditions: %w", err)
+	}
+
+	if len(simpleConditions) == 0 {
+		return fmt.Errorf("simple condition must have at least one condition")
+	}
+
+	for _, simpleCond := range simpleConditions {
+		if err := pe.validateSimpleConditionItem(simpleCond); err != nil {
+			return fmt.Errorf("invalid simple condition item: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// validateCompositeConditionStructure validates composite condition structure
+func (pe *PolicyEngine) validateCompositeConditionStructure(condition *model.PolicyCondition) error {
+	var subConditions []model.PolicyCondition
+	if err := json.Unmarshal(condition.Conditions, &subConditions); err != nil {
+		return fmt.Errorf("failed to unmarshal composite conditions: %w", err)
+	}
+
+	if len(subConditions) == 0 {
+		return fmt.Errorf("composite condition must have at least one sub-condition")
+	}
+
+	// Recursively validate sub-conditions
+	for _, subCondition := range subConditions {
+		if err := pe.validateCondition(&subCondition); err != nil {
+			return fmt.Errorf("invalid sub-condition: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// validateSimpleConditionItem validates individual simple condition attributes
+func (pe *PolicyEngine) validateSimpleConditionItem(condition model.SimpleCondition) error {
+	if condition.Attribute == "" {
+		return fmt.Errorf("attribute cannot be empty")
+	}
+
+	// Validate operators
+	validOperators := []string{">=", ">", "<=", "<", "==", "!=", "in", "not_in", "contains"}
+	valid := false
+	for _, op := range validOperators {
+		if condition.Operator == op {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return fmt.Errorf("invalid operator: %s", condition.Operator)
+	}
+
+	if condition.Value == nil {
+		return fmt.Errorf("value cannot be nil")
+	}
+
+	return nil
 }
 
 // GetResourcePolicy gets a policy for any resource type
@@ -420,4 +622,64 @@ func (pe *PolicyEngine) evaluateCustomerAttribute(customer *model.Customer, cond
 		return pe.evaluateNumericCondition(float64(accountAge), condition.Operator, condition.Value)
 	}
 	return false
+}
+
+// UpdateResourcePolicy updates specific parts of a resource policy
+func (pe *PolicyEngine) UpdateResourcePolicy(ctx context.Context, resourceType, resourceID string, updates map[string]interface{}, updatedBy string) error {
+	return pe.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Check if policy exists
+		var existingPolicy model.ResourceAccessPolicy
+		err := tx.Where("resource_type = ? AND resource_id = ?", resourceType, resourceID).
+			Preload("Conditions").
+			First(&existingPolicy).Error
+		if err != nil {
+			return fmt.Errorf("policy not found: %w", err)
+		}
+
+		// Apply updates
+		updateFields := make(map[string]interface{})
+		updateFields["updated_at"] = time.Now()
+
+		if policyType, ok := updates["policy_type"]; ok {
+			if policyType != "allow" && policyType != "deny" {
+				return fmt.Errorf("invalid policy type: %v", policyType)
+			}
+			updateFields["policy_type"] = policyType
+		}
+
+		if restrictions, ok := updates["restrictions"]; ok {
+			updateFields["restrictions"] = restrictions
+		}
+
+		// Update the policy
+		if err := tx.Model(&existingPolicy).Updates(updateFields).Error; err != nil {
+			return fmt.Errorf("failed to update policy: %w", err)
+		}
+
+		// Handle condition updates
+		if conditions, ok := updates["conditions"]; ok {
+			conditionsList, ok := conditions.([]model.PolicyCondition)
+			if !ok {
+				return fmt.Errorf("invalid conditions format")
+			}
+
+			// Delete existing conditions
+			if err := tx.Where("resource_type = ? AND resource_id = ?", resourceType, resourceID).Delete(&model.PolicyCondition{}).Error; err != nil {
+				return fmt.Errorf("failed to delete existing conditions: %w", err)
+			}
+
+			// Create new conditions
+			for i := range conditionsList {
+				condition := &conditionsList[i]
+				condition.ResourceType = resourceType
+				condition.ResourceID = resourceID
+
+				if err := pe.processAndCreateCondition(tx, condition); err != nil {
+					return fmt.Errorf("failed to process updated condition %s: %w", condition.Name, err)
+				}
+			}
+		}
+
+		return nil
+	})
 }

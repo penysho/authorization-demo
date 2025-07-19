@@ -301,7 +301,7 @@ func (h *StructuredPolicyHandler) GetPolicyTemplates(c *gin.Context) {
 			"id":            "high_value_order",
 			"name":          "高額注文制限",
 			"description":   "指定金額以上の注文に対する制限",
-			"resource_type": "order",
+			"resource_type": "orders",
 			"template": PolicyConditionRequest{
 				Name: "高額注文制限",
 				Type: "simple",
@@ -318,7 +318,7 @@ func (h *StructuredPolicyHandler) GetPolicyTemplates(c *gin.Context) {
 			"id":            "enterprise_customer",
 			"name":          "エンタープライズ顧客限定",
 			"description":   "エンタープライズ顧客のみアクセス可能",
-			"resource_type": "customer",
+			"resource_type": "customers",
 			"template": PolicyConditionRequest{
 				Name: "エンタープライズ顧客限定",
 				Type: "simple",
