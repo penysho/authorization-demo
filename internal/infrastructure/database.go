@@ -92,9 +92,9 @@ func MigratePolicyStoreSchema(db *gorm.DB) error {
 
 // MigratePolicyEngineSchema migrates policy engine tables
 func MigratePolicyEngineSchema(db *gorm.DB) error {
-	// Create product_access_policies table
-	if err := db.AutoMigrate(&model.ProductAccessPolicy{}); err != nil {
-		return fmt.Errorf("failed to migrate ProductAccessPolicy table: %w", err)
+	// Create resource_access_policies table (new generic table)
+	if err := db.AutoMigrate(&model.ResourceAccessPolicy{}); err != nil {
+		return fmt.Errorf("failed to migrate ResourceAccessPolicy table: %w", err)
 	}
 
 	// Create policy_conditions table
@@ -112,18 +112,18 @@ func MigratePolicyEngineSchema(db *gorm.DB) error {
 
 // createPolicyEngineIndexes creates necessary indexes for policy engine tables
 func createPolicyEngineIndexes(db *gorm.DB) error {
-	// Index for product_access_policies
+	// Index for resource_access_policies
 	if err := db.Exec(`
-		CREATE INDEX IF NOT EXISTS idx_product_access_policies_product_id
-		ON product_access_policies(product_id)
+		CREATE INDEX IF NOT EXISTS idx_resource_access_policies_resource
+		ON resource_access_policies(resource_type, resource_id)
 	`).Error; err != nil {
 		return err
 	}
 
-	// Composite index for policy_conditions
+	// Composite index for policy_conditions on resource
 	if err := db.Exec(`
-		CREATE INDEX IF NOT EXISTS idx_policy_conditions_product_enabled
-		ON policy_conditions(product_id, enabled)
+		CREATE INDEX IF NOT EXISTS idx_policy_conditions_resource_enabled
+		ON policy_conditions(resource_type, resource_id, enabled)
 	`).Error; err != nil {
 		return err
 	}
@@ -141,19 +141,78 @@ func createPolicyEngineIndexes(db *gorm.DB) error {
 
 // MigrateAllSchemas performs all database migrations in the correct order
 func MigrateAllSchemas(db *gorm.DB) error {
-	// Migrate core models (User, Product)
-	if err := db.AutoMigrate(&model.User{}, &model.Product{}); err != nil {
-		return fmt.Errorf("failed to migrate core schemas: %w", err)
+	// 1. First migrate core models
+	if err := db.AutoMigrate(&model.User{}); err != nil {
+		return fmt.Errorf("failed to migrate User table: %w", err)
 	}
 
-	// Migrate policy store schemas
+	if err := db.AutoMigrate(&model.Product{}); err != nil {
+		return fmt.Errorf("failed to migrate Product table: %w", err)
+	}
+
+	if err := db.AutoMigrate(&model.Customer{}); err != nil {
+		return fmt.Errorf("failed to migrate Customer table: %w", err)
+	}
+
+	if err := db.AutoMigrate(&model.Order{}); err != nil {
+		return fmt.Errorf("failed to migrate Order table: %w", err)
+	}
+
+	// 2. Migrate Casbin policy tables
 	if err := MigratePolicyStoreSchema(db); err != nil {
-		return fmt.Errorf("failed to migrate policy store schema: %w", err)
+		return err
 	}
 
-	// Migrate policy engine schemas
+	// 3. Migrate structured policy engine tables
 	if err := MigratePolicyEngineSchema(db); err != nil {
-		return fmt.Errorf("failed to migrate policy engine schema: %w", err)
+		return err
+	}
+
+	// 4. Create additional indexes for better performance
+	if err := createAdditionalIndexes(db); err != nil {
+		return fmt.Errorf("failed to create additional indexes: %w", err)
+	}
+
+	return nil
+}
+
+// createAdditionalIndexes creates additional indexes for performance
+func createAdditionalIndexes(db *gorm.DB) error {
+	// Index for orders
+	if err := db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_orders_customer_id
+		ON orders(customer_id)
+	`).Error; err != nil {
+		return err
+	}
+
+	if err := db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_orders_product_id
+		ON orders(product_id)
+	`).Error; err != nil {
+		return err
+	}
+
+	if err := db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_orders_status
+		ON orders(status)
+	`).Error; err != nil {
+		return err
+	}
+
+	// Index for customers
+	if err := db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_customers_user_id
+		ON customers(user_id)
+	`).Error; err != nil {
+		return err
+	}
+
+	if err := db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_customers_customer_type
+		ON customers(customer_type)
+	`).Error; err != nil {
+		return err
 	}
 
 	return nil

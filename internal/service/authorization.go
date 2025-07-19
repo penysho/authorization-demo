@@ -166,11 +166,11 @@ func (s *AuthorizationService) RefreshPolicies(ctx context.Context) error {
 }
 
 // CheckPermission は権限をチェック（キャッシュ機能付き）
-func (s *AuthorizationService) CheckPermission(user *model.User, resource, action string, resourceID *string) (bool, error) {
+func (s *AuthorizationService) CheckPermission(user *model.User, resourceType, action string, resourceID *string) (bool, error) {
 	startTime := time.Now()
 
 	// Generate cache key
-	cacheKey := s.generateCacheKey(user, resource, action, resourceID)
+	cacheKey := s.generateCacheKey(user, resourceType, action, resourceID)
 
 	// Check cache first
 	if cached, found := s.permissionCache.Load(cacheKey); found {
@@ -194,7 +194,7 @@ func (s *AuthorizationService) CheckPermission(user *model.User, resource, actio
 	}
 
 	// Perform actual permission check
-	allowed, err := s.checkPermissionInternal(user, resource, action, resourceID)
+	allowed, err := s.checkPermissionInternal(user, resourceType, action, resourceID)
 	if err != nil {
 		// Record failed request metrics
 		s.trackMetrics(false, err, time.Since(startTime), false)
@@ -213,7 +213,7 @@ func (s *AuthorizationService) CheckPermission(user *model.User, resource, actio
 }
 
 // checkPermissionInternal performs the actual permission check
-func (s *AuthorizationService) checkPermissionInternal(user *model.User, resource, action string, resourceID *string) (bool, error) {
+func (s *AuthorizationService) checkPermissionInternal(user *model.User, resourceType, action string, resourceID *string) (bool, error) {
 	// ポリシーキャッシュの有効性チェック
 	if time.Since(s.lastPolicyRefreshTime) > s.policyRefreshInterval {
 		if err := s.RefreshPolicies(context.Background()); err != nil {
@@ -222,7 +222,7 @@ func (s *AuthorizationService) checkPermissionInternal(user *model.User, resourc
 	}
 
 	// まずRBACで基本的な権限をチェック
-	rbacAllowed, err := s.checkRBACPermission(user, resource, action)
+	rbacAllowed, err := s.checkRBACPermission(user, resourceType, action)
 	if err != nil {
 		return false, err
 	}
@@ -234,7 +234,7 @@ func (s *AuthorizationService) checkPermissionInternal(user *model.User, resourc
 
 	// 個別リソースの場合はABACでさらに詳細チェック
 	if resourceID != nil {
-		abacAllowed, err := s.checkABACPermission(user, *resourceID, action)
+		abacAllowed, err := s.checkABACPermission(user, *resourceID, resourceType, action)
 		if err != nil {
 			return false, err
 		}
@@ -255,51 +255,14 @@ func (s *AuthorizationService) checkRBACPermission(user *model.User, resource, a
 }
 
 // checkABACPermission はABACによる権限チェック
-func (s *AuthorizationService) checkABACPermission(user *model.User, resource, action string) (bool, error) {
+func (s *AuthorizationService) checkABACPermission(user *model.User, resourceID, resourceType, action string) (bool, error) {
 	// Use the configured ABAC engine
-	allowed, err := s.abacEngine.EvaluatePermission(context.Background(), user, resource, action)
+	allowed, err := s.abacEngine.EvaluatePermission(context.Background(), user, resourceType, resourceID, action)
 	if err != nil {
 		return false, fmt.Errorf("ABAC permission check failed with %s engine: %w", s.abacEngine.GetEngineType(), err)
 	}
 
 	return allowed, nil
-}
-
-// AddProductPolicy は商品固有のポリシーを追加
-func (s *AuthorizationService) AddProductPolicy(ctx context.Context, productID string, policy ProductPolicy, createdBy string) error {
-	rule := model.PolicyRule{
-		Type:      "abac",
-		Condition: policy.SubjectRule,
-		Resource:  productID,
-		Action:    policy.Action,
-		Effect:    "allow",
-		CreatedBy: createdBy,
-	}
-
-	if err := s.casbinPolicyStore.SavePolicy(ctx, rule); err != nil {
-		return fmt.Errorf("failed to save product policy: %w", err)
-	}
-
-	// 監査ログの記録
-	change := model.PolicyChange{
-		Type:      "product_policy_add",
-		After:     rule,
-		ChangedBy: createdBy,
-		Reason:    fmt.Sprintf("Product policy added for product %s", productID),
-	}
-
-	if err := s.casbinPolicyStore.LogPolicyChange(ctx, change); err != nil {
-		fmt.Printf("Warning: failed to log policy change: %v\n", err)
-	}
-
-	// ポリシーの再読み込み
-	return s.RefreshPolicies(ctx)
-}
-
-// ProductPolicy は商品固有のポリシー定義
-type ProductPolicy struct {
-	SubjectRule string `json:"subject_rule"`
-	Action      string `json:"action"`
 }
 
 // AddPolicy は新しいポリシーを追加
@@ -550,7 +513,7 @@ func (s *AuthorizationService) CheckBulkPermissions(ctx context.Context, request
 			}
 
 			// ABACチェック
-			allowed, err := s.checkABACPermission(request.User, id, request.Action)
+			allowed, err := s.checkABACPermission(request.User, id, request.Resource, request.Action)
 			if err != nil {
 				resultChan <- checkResult{id: id, allowed: false, err: err}
 				return

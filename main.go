@@ -31,14 +31,10 @@ func main() {
 
 	casbinPolicyStore := service.NewCasbinDatabasePolicyStore(db)
 	structuredPolicyEngine := service.NewPolicyEngine(db)
-
-	// Initialize authorization service
 	authzService, err := service.NewAuthorizationService(casbinPolicyStore, structuredPolicyEngine)
 	if err != nil {
 		log.Fatalf("Failed to initialize authorization service: %v", err)
 	}
-
-	// Initialize product service with ABAC support
 	productService := service.NewProductService(db, authzService)
 
 	// Initialize seed data manager and setup sample data
@@ -96,15 +92,6 @@ func main() {
 
 	// Casbin policy management routes (admin only)
 	casbinAPI := api.Group("/casbin")
-	casbinAPI.POST("/products/:id",
-		middleware.RequirePermission(authzService, "policies", "admin"),
-		productHandler.SetProductPolicy)
-	casbinAPI.GET("/products/:id",
-		middleware.RequirePermission(authzService, "policies", "admin"),
-		productHandler.GetProductPolicy)
-	casbinAPI.GET("/products/:id/access",
-		middleware.RequirePermission(authzService, "products", "read"),
-		productHandler.CheckProductAccess)
 	casbinAPI.POST("/policies",
 		middleware.RequirePermission(authzService, "policies", "admin"),
 		casbinPolicyHandler.CreatePolicy)
@@ -115,14 +102,14 @@ func main() {
 		middleware.RequirePermission(authzService, "policies", "admin"),
 		casbinPolicyHandler.GetAuditLog)
 
-	// Structured policy management routes (admin only)
-	structuredAPI := api.Group("/structured-policy")
-	structuredAPI.POST("/products/:id",
+	// Structured policy management routes (new generic API)
+	structuredAPI := api.Group("/structured-policies")
+	structuredAPI.POST("/resources",
 		middleware.RequirePermission(authzService, "policies", "admin"),
-		structuredPolicyHandler.CreateProductPolicy)
-	structuredAPI.GET("/products/:id",
+		structuredPolicyHandler.CreateResourcePolicy)
+	structuredAPI.GET("/resources",
 		middleware.RequirePermission(authzService, "policies", "admin"),
-		structuredPolicyHandler.GetProductPolicy)
+		structuredPolicyHandler.GetResourcePolicy)
 	structuredAPI.POST("/test",
 		middleware.RequirePermission(authzService, "policies", "admin"),
 		structuredPolicyHandler.TestPolicy)

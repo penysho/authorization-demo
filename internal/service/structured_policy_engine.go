@@ -21,12 +21,12 @@ func NewPolicyEngine(db *gorm.DB) *PolicyEngine {
 	return &PolicyEngine{db: db}
 }
 
-// EvaluateProductAccess は商品へのアクセス可否を評価
-func (pe *PolicyEngine) EvaluateProductAccess(ctx context.Context, user *model.User, productID string, action string) (bool, error) {
-	// Get product access policy
-	var policy model.ProductAccessPolicy
+// EvaluateResourceAccess evaluates access to any resource type
+func (pe *PolicyEngine) EvaluateResourceAccess(ctx context.Context, user *model.User, resourceType, resourceID, action string) (bool, error) {
+	// Get resource access policy
+	var policy model.ResourceAccessPolicy
 	err := pe.db.WithContext(ctx).
-		Where("product_id = ?", productID).
+		Where("resource_type = ? AND resource_id = ?", resourceType, resourceID).
 		Preload("Conditions", "enabled = ?", true).
 		First(&policy).Error
 
@@ -34,7 +34,7 @@ func (pe *PolicyEngine) EvaluateProductAccess(ctx context.Context, user *model.U
 		if err == gorm.ErrRecordNotFound {
 			return true, nil
 		}
-		return false, fmt.Errorf("failed to load product policy: %w", err)
+		return false, fmt.Errorf("failed to load resource policy: %w", err)
 	}
 
 	// Evaluate conditions
@@ -74,6 +74,12 @@ func (pe *PolicyEngine) EvaluateProductAccess(ctx context.Context, user *model.U
 
 // evaluateCondition は単一の条件を評価
 func (pe *PolicyEngine) evaluateCondition(ctx context.Context, user *model.User, condition model.PolicyCondition) (bool, error) {
+	// Load resource data based on resource type
+	resourceData, err := pe.loadResourceData(ctx, condition.ResourceType, condition.ResourceID)
+	if err != nil {
+		return false, fmt.Errorf("failed to load resource data: %w", err)
+	}
+
 	if condition.Type == "composite" {
 		// Handle composite conditions
 		var subConditions []model.PolicyCondition
@@ -115,7 +121,7 @@ func (pe *PolicyEngine) evaluateCondition(ctx context.Context, user *model.User,
 	}
 
 	for _, cond := range simpleConditions {
-		result := pe.evaluateSimpleCondition(user, cond)
+		result := pe.evaluateSimpleCondition(user, condition.ResourceType, resourceData, cond)
 		if !result {
 			return false, nil
 		}
@@ -124,8 +130,35 @@ func (pe *PolicyEngine) evaluateCondition(ctx context.Context, user *model.User,
 	return true, nil
 }
 
+// loadResourceData loads the resource data based on type
+func (pe *PolicyEngine) loadResourceData(ctx context.Context, resourceType, resourceID string) (interface{}, error) {
+	switch resourceType {
+	case model.ResourceTypeProduct:
+		var product model.Product
+		if err := pe.db.WithContext(ctx).Where("id = ?", resourceID).First(&product).Error; err != nil {
+			return nil, err
+		}
+		return &product, nil
+	case model.ResourceTypeOrder:
+		var order model.Order
+		if err := pe.db.WithContext(ctx).Where("id = ?", resourceID).First(&order).Error; err != nil {
+			return nil, err
+		}
+		return &order, nil
+	case model.ResourceTypeCustomer:
+		var customer model.Customer
+		if err := pe.db.WithContext(ctx).Where("id = ?", resourceID).First(&customer).Error; err != nil {
+			return nil, err
+		}
+		return &customer, nil
+	default:
+		return nil, nil // Unknown resource type, only user attributes will be evaluated
+	}
+}
+
 // evaluateSimpleCondition は単純な条件を評価
-func (pe *PolicyEngine) evaluateSimpleCondition(user *model.User, condition model.SimpleCondition) bool {
+func (pe *PolicyEngine) evaluateSimpleCondition(user *model.User, resourceType string, resourceData interface{}, condition model.SimpleCondition) bool {
+	// First, try user attributes
 	switch condition.Attribute {
 	case "age":
 		return pe.evaluateNumericCondition(float64(user.Age), condition.Operator, condition.Value)
@@ -137,9 +170,25 @@ func (pe *PolicyEngine) evaluateSimpleCondition(user *model.User, condition mode
 		return pe.evaluateBooleanCondition(user.Premium, condition.Operator, condition.Value)
 	case "role":
 		return pe.evaluateStringCondition(user.Role, condition.Operator, condition.Value)
-	default:
-		return false
 	}
+
+	// Then, try resource-specific attributes
+	switch resourceType {
+	case model.ResourceTypeProduct:
+		if product, ok := resourceData.(*model.Product); ok {
+			return pe.evaluateProductAttribute(product, condition)
+		}
+	case model.ResourceTypeOrder:
+		if order, ok := resourceData.(*model.Order); ok {
+			return pe.evaluateOrderAttribute(order, condition)
+		}
+	case model.ResourceTypeCustomer:
+		if customer, ok := resourceData.(*model.Customer); ok {
+			return pe.evaluateCustomerAttribute(customer, condition)
+		}
+	}
+
+	return false
 }
 
 // evaluateNumericCondition は数値条件を評価
@@ -265,20 +314,21 @@ func (pe *PolicyEngine) checkTimeRestriction(restriction *model.TimeRestriction)
 	return currentTime >= restriction.StartTime && currentTime <= restriction.EndTime
 }
 
-// CreateProductPolicy は商品のポリシーを作成
-func (pe *PolicyEngine) CreateProductPolicy(ctx context.Context, productID string, policy model.ProductAccessPolicy, createdBy string) error {
-	policy.ProductID = productID
+// CreateResourcePolicy creates a policy for any resource type
+func (pe *PolicyEngine) CreateResourcePolicy(ctx context.Context, resourceType, resourceID string, policy model.ResourceAccessPolicy, createdBy string) error {
+	policy.ResourceType = resourceType
+	policy.ResourceID = resourceID
 	policy.CreatedBy = createdBy
 	policy.UpdatedAt = time.Now()
 
 	return pe.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Delete existing conditions first to avoid foreign key constraint violation
-		if err := tx.Where("product_id = ?", productID).Delete(&model.PolicyCondition{}).Error; err != nil {
+		if err := tx.Where("resource_type = ? AND resource_id = ?", resourceType, resourceID).Delete(&model.PolicyCondition{}).Error; err != nil {
 			return err
 		}
 
 		// Delete existing policy
-		if err := tx.Where("product_id = ?", productID).Delete(&model.ProductAccessPolicy{}).Error; err != nil {
+		if err := tx.Where("resource_type = ? AND resource_id = ?", resourceType, resourceID).Delete(&model.ResourceAccessPolicy{}).Error; err != nil {
 			return err
 		}
 
@@ -291,20 +341,83 @@ func (pe *PolicyEngine) CreateProductPolicy(ctx context.Context, productID strin
 	})
 }
 
-// GetProductPolicy は商品のポリシーを取得
-func (pe *PolicyEngine) GetProductPolicy(ctx context.Context, productID string) (*model.ProductAccessPolicy, error) {
-	var policy model.ProductAccessPolicy
+// GetResourcePolicy gets a policy for any resource type
+func (pe *PolicyEngine) GetResourcePolicy(ctx context.Context, resourceType, resourceID string) (*model.ResourceAccessPolicy, error) {
+	var policy model.ResourceAccessPolicy
 	err := pe.db.WithContext(ctx).
-		Where("product_id = ?", productID).
+		Where("resource_type = ? AND resource_id = ?", resourceType, resourceID).
 		Preload("Conditions").
 		First(&policy).Error
 
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("policy not found for product: %s", productID)
+			return nil, fmt.Errorf("policy not found for resource: %s/%s", resourceType, resourceID)
 		}
-		return nil, fmt.Errorf("failed to get product policy: %w", err)
+		return nil, fmt.Errorf("failed to get resource policy: %w", err)
 	}
 
 	return &policy, nil
+}
+
+// evaluateProductAttribute evaluates product-specific attributes
+func (pe *PolicyEngine) evaluateProductAttribute(product *model.Product, condition model.SimpleCondition) bool {
+	switch condition.Attribute {
+	case "price":
+		return pe.evaluateNumericCondition(product.Price, condition.Operator, condition.Value)
+	case "category":
+		return pe.evaluateStringCondition(product.Category, condition.Operator, condition.Value)
+	case "age_limit":
+		return pe.evaluateNumericCondition(float64(product.AgeLimit), condition.Operator, condition.Value)
+	case "region":
+		return pe.evaluateStringCondition(product.Region, condition.Operator, condition.Value)
+	case "is_adult":
+		return pe.evaluateBooleanCondition(product.IsAdult, condition.Operator, condition.Value)
+	case "rating":
+		return pe.evaluateStringCondition(product.Rating, condition.Operator, condition.Value)
+	}
+	return false
+}
+
+// evaluateOrderAttribute evaluates order-specific attributes
+func (pe *PolicyEngine) evaluateOrderAttribute(order *model.Order, condition model.SimpleCondition) bool {
+	switch condition.Attribute {
+	case "amount":
+		return pe.evaluateNumericCondition(order.Amount, condition.Operator, condition.Value)
+	case "status":
+		return pe.evaluateStringCondition(order.Status, condition.Operator, condition.Value)
+	case "priority":
+		return pe.evaluateStringCondition(order.Priority, condition.Operator, condition.Value)
+	case "region":
+		return pe.evaluateStringCondition(order.Region, condition.Operator, condition.Value)
+	case "days_old":
+		daysOld := int(time.Since(order.CreatedAt).Hours() / 24)
+		return pe.evaluateNumericCondition(float64(daysOld), condition.Operator, condition.Value)
+	}
+	return false
+}
+
+// evaluateCustomerAttribute evaluates customer-specific attributes
+func (pe *PolicyEngine) evaluateCustomerAttribute(customer *model.Customer, condition model.SimpleCondition) bool {
+	switch condition.Attribute {
+	case "customer_type":
+		return pe.evaluateStringCondition(customer.CustomerType, condition.Operator, condition.Value)
+	case "credit_limit":
+		return pe.evaluateNumericCondition(customer.CreditLimit, condition.Operator, condition.Value)
+	case "total_purchases":
+		return pe.evaluateNumericCondition(customer.TotalPurchases, condition.Operator, condition.Value)
+	case "account_status":
+		return pe.evaluateStringCondition(customer.AccountStatus, condition.Operator, condition.Value)
+	case "payment_terms":
+		return pe.evaluateStringCondition(customer.PaymentTerms, condition.Operator, condition.Value)
+	case "industry":
+		return pe.evaluateStringCondition(customer.Industry, condition.Operator, condition.Value)
+	case "employee_count":
+		return pe.evaluateNumericCondition(float64(customer.EmployeeCount), condition.Operator, condition.Value)
+	case "risk_score":
+		return pe.evaluateNumericCondition(float64(customer.RiskScore), condition.Operator, condition.Value)
+	case "account_age":
+		accountAge := int(time.Since(customer.CreatedAt).Hours() / 24)
+		return pe.evaluateNumericCondition(float64(accountAge), condition.Operator, condition.Value)
+	}
+	return false
 }

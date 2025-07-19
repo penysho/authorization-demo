@@ -27,11 +27,6 @@ type ProductService interface {
 	GetProductsForUser(ctx context.Context, user *model.User, filters ProductFilters) (*PagedProductResponse, error)
 	UpdateProduct(ctx context.Context, id string, req *model.ProductRequest, updatedBy string) (*model.Product, error)
 	DeleteProduct(ctx context.Context, id string, deletedBy string) error
-
-	// ABAC関連機能
-	SetProductPolicy(ctx context.Context, productID string, policy ProductPolicy, createdBy string) error
-	GetProductPolicy(ctx context.Context, productID string) (*ProductPolicy, error)
-	CheckProductAccess(ctx context.Context, userID, productID, action string) (bool, error)
 }
 
 // ProductFilters は商品フィルタリング条件
@@ -273,63 +268,21 @@ func (s *productServiceImpl) UpdateProduct(ctx context.Context, id string, req *
 		return nil, fmt.Errorf("failed to update product: %w", err)
 	}
 
-	// ポリシーの更新（必要に応じて）
-	if err := s.updateProductPolicy(ctx, &product, updatedBy); err != nil {
-		fmt.Printf("Warning: failed to update policy for product %s: %v\n", product.ID, err)
-	}
-
 	return &product, nil
 }
 
 // DeleteProduct は商品を削除
 func (s *productServiceImpl) DeleteProduct(ctx context.Context, id string, deletedBy string) error {
-	if err := s.db.WithContext(ctx).Where("id = ?", id).Delete(&model.Product{}).Error; err != nil {
+	var product model.Product
+	if err := s.db.WithContext(ctx).Where("id = ?", id).First(&product).Error; err != nil {
+		return fmt.Errorf("failed to find product: %w", err)
+	}
+
+	// 削除
+	if err := s.db.WithContext(ctx).Delete(&product).Error; err != nil {
 		return fmt.Errorf("failed to delete product: %w", err)
 	}
 
-	// 関連するポリシーも削除
-	if err := s.deleteProductPolicy(ctx, id, deletedBy); err != nil {
-		fmt.Printf("Warning: failed to delete policy for product %s: %v\n", id, err)
-	}
-
-	return nil
-}
-
-// SetProductPolicy は商品固有のポリシーを設定
-func (s *productServiceImpl) SetProductPolicy(ctx context.Context, productID string, policy ProductPolicy, createdBy string) error {
-	return s.authSvc.AddProductPolicy(ctx, productID, policy, createdBy)
-}
-
-// GetProductPolicy は商品のポリシーを取得
-func (s *productServiceImpl) GetProductPolicy(ctx context.Context, productID string) (*ProductPolicy, error) {
-	// TODO: ポリシーストアから商品固有のポリシーを取得
-	return nil, nil
-}
-
-// CheckProductAccess は商品アクセス権限をチェック
-func (s *productServiceImpl) CheckProductAccess(ctx context.Context, userID, productID, action string) (bool, error) {
-	var user model.User
-	if err := s.db.WithContext(ctx).Where("id = ?", userID).First(&user).Error; err != nil {
-		return false, fmt.Errorf("failed to get user: %w", err)
-	}
-
-	return s.authSvc.CheckPermission(&user, "products", action, &productID)
-}
-
-// updateProductPolicy は商品更新時にポリシーを更新
-func (s *productServiceImpl) updateProductPolicy(ctx context.Context, product *model.Product, updatedBy string) error {
-	// 既存のポリシーを削除して新しいポリシーを設定
-	if err := s.deleteProductPolicy(ctx, product.ID, updatedBy); err != nil {
-		return err
-	}
-	return nil
-}
-
-// deleteProductPolicy は商品のポリシーを削除
-func (s *productServiceImpl) deleteProductPolicy(ctx context.Context, productID, deletedBy string) error {
-	// TODO: ポリシーストアから商品固有のポリシーを削除
-	// 現在は簡略化のため、ログ出力のみ
-	fmt.Printf("Product policy deleted for product %s by %s\n", productID, deletedBy)
 	return nil
 }
 

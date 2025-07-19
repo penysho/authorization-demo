@@ -21,7 +21,7 @@ const (
 // ABACEngine defines the interface for ABAC (Attribute-Based Access Control) engines
 type ABACEngine interface {
 	// EvaluatePermission evaluates whether a user has permission to perform an action on a resource
-	EvaluatePermission(ctx context.Context, user *model.User, resource, action string) (bool, error)
+	EvaluatePermission(ctx context.Context, user *model.User, resourceType, resourceID, action string) (bool, error)
 
 	// GetEngineType returns the type of the ABAC engine for identification
 	GetEngineType() string
@@ -55,7 +55,7 @@ func NewCasbinABACEngine(configPath string) (*CasbinABACEngine, error) {
 }
 
 // EvaluatePermission evaluates permission using Casbin ABAC
-func (e *CasbinABACEngine) EvaluatePermission(ctx context.Context, user *model.User, resource, action string) (bool, error) {
+func (e *CasbinABACEngine) EvaluatePermission(ctx context.Context, user *model.User, resourceType, resourceID, action string) (bool, error) {
 	userRequest := &model.UserRequest{
 		ID:       user.ID,
 		Username: user.Username,
@@ -66,7 +66,7 @@ func (e *CasbinABACEngine) EvaluatePermission(ctx context.Context, user *model.U
 		VIPLevel: user.VIPLevel,
 	}
 
-	allowed, err := e.enforcer.Enforce(userRequest, resource, action)
+	allowed, err := e.enforcer.Enforce(userRequest, resourceID, action)
 	if err != nil {
 		return false, fmt.Errorf("casbin ABAC permission check failed: %w", err)
 	}
@@ -111,16 +111,15 @@ func NewStructuredPolicyABACEngine(policyEngine *PolicyEngine) *StructuredPolicy
 }
 
 // EvaluatePermission evaluates permission using the structured policy engine
-func (e *StructuredPolicyABACEngine) EvaluatePermission(ctx context.Context, user *model.User, resource, action string) (bool, error) {
+func (e *StructuredPolicyABACEngine) EvaluatePermission(ctx context.Context, user *model.User, resourceType, resourceID, action string) (bool, error) {
 	if e.policyEngine == nil {
 		return false, fmt.Errorf("structured policy engine is not available")
 	}
 
-	allowed, err := e.policyEngine.EvaluateProductAccess(ctx, user, resource, action)
+	allowed, err := e.policyEngine.EvaluateResourceAccess(ctx, user, resourceType, resourceID, action)
 	if err != nil {
 		return false, fmt.Errorf("structured policy ABAC permission check failed: %w", err)
 	}
-
 	return allowed, nil
 }
 

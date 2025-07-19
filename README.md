@@ -1,83 +1,174 @@
 # Authorization Demo
 
-Golang + Gin + Casbin を使ったRBAC/ABAC認可システムのサンプルアプリケーション
+This project demonstrates the implementation of authorization mechanisms using **RBAC (Role-Based Access Control)** and **ABAC (Attribute-Based Access Control)** with Go and the Casbin library.
 
-## 概要
+## Features
 
-ECサイトのバックエンドAPIを想定し、商品管理における認可制御を実装したデモアプリケーションです。
+- **RBAC (Role-Based Access Control)**: Manages permissions based on user roles.
+- **ABAC (Attribute-Based Access Control)**: Grants permissions based on user and resource attributes.
+- **Generic Resource-Based Policies**: Support for any resource type (products, orders, customers, etc.)
+- **Structured Policy Engine**: Flexible policy conditions with AND/OR logic
+- **Time-based Restrictions**: Support for business hours and time zones
+- **Advanced Filtering**: PDP-level filtering with partial evaluation
+- **Dual authorization engines**: Casbin-based and custom structured policy engine
+- **Audit Logging**: Tracks all policy changes and access decisions
+- **Performance Metrics**: Built-in metrics tracking for authorization decisions
 
-### 機能
+## Generic ABAC System
 
-- **RBAC (Role-Based Access Control)**
-  - 管理者ロール: 商品の閲覧、編集、削除が可能
-  - 運用者ロール: 商品の閲覧、編集が可能
-  - 顧客ロール: 商品の閲覧が可能
+The system supports attribute-based access control for any resource type:
 
-- **ABAC (Attribute-Based Access Control)**
-  - 商品IDごとに、ユーザーの年齢に応じて閲覧可能かどうかを判定
+### Supported Resource Types
 
-### 使用技術
+- **Product**: Product catalog with price, category, age restrictions
+- **Order**: Customer orders with amount, status, priority
+- **Customer**: Customer profiles with type, credit limit, risk score
+- **Invoice**: Financial documents (extensible)
+- **Report**: Business reports (extensible)
 
-- Go 1.23+
-- Gin Web Framework
-- Casbin v2 (認可ライブラリ)
-- JWT認証
+### Policy Structure
 
-## セットアップ
+```json
+{
+  "resource_type": "order",
+  "resource_id": "order_123",
+  "policy_type": "allow",
+  "conditions": [{
+    "name": "High Value Order Restriction",
+    "type": "simple",
+    "conditions": [{
+      "attribute": "amount",
+      "operator": "<=",
+      "value": 10000
+    }]
+  }]
+}
+```
 
-1. 依存関係をインストール
+### Resource-Specific Attributes
+
+#### User Attributes
+
+- `age`, `location`, `vip_level`, `premium`, `role`
+
+#### Product Attributes
+
+- `price`, `category`, `age_limit`, `region`, `is_adult`, `rating`
+
+#### Order Attributes
+
+- `amount`, `status`, `priority`, `region`, `days_old`
+
+#### Customer Attributes
+
+- `customer_type`, `credit_limit`, `total_purchases`, `account_status`
+- `payment_terms`, `industry`, `employee_count`, `risk_score`, `account_age`
+
+## Architecture
+
+The project follows a layered architecture:
+
+- **Handler Layer**: HTTP handlers for API endpoints
+- **Service Layer**: Business logic and authorization services
+- **Model Layer**: Data models and structures
+- **Infrastructure Layer**: Database connections and migrations
+- **Middleware Layer**: Authentication and authorization middleware
+
+## API Endpoints
+
+### Resource Policy Management
+
+- `POST /api/structured-policies/resources` - Create/update resource policy
+- `GET /api/structured-policies/resources` - Get resource policy
+- `POST /api/structured-policies/test` - Test policy evaluation
+- `GET /api/structured-policies/templates` - Get policy templates
+
+### Other Endpoints
+
+- Authentication, Products, Users, and Casbin policy management endpoints
+
+## Installation
+
+1. Clone the repository
+2. Set up PostgreSQL database
+3. Configure environment variables:
+
+   ```bash
+   DB_HOST=localhost
+   DB_PORT=5432
+   DB_USER=your_user
+   DB_PASSWORD=your_password
+   DB_NAME=authorization_demo
+   DB_SSLMODE=disable
+   ```
+
+4. Run migrations: The application automatically runs migrations on startup
+5. Start the server: `go run main.go`
+
+## Usage Examples
+
+### Creating a Policy for Orders
 
 ```bash
-go mod tidy
+curl -X POST http://localhost:8080/api/structured-policies/resources \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "resource_type": "order",
+    "resource_id": "order_123",
+    "policy_type": "allow",
+    "conditions": [{
+      "name": "VIP Orders Only",
+      "type": "simple",
+      "conditions": [{
+        "attribute": "vip_level",
+        "operator": ">=",
+        "value": 3
+      }]
+    }]
+  }'
 ```
 
-2. アプリケーションを起動
+### Creating a Policy for Customers
 
 ```bash
-go run main.go
+curl -X POST http://localhost:8080/api/structured-policies/resources \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "resource_type": "customer",
+    "resource_id": "cust_456",
+    "policy_type": "allow",
+    "conditions": [{
+      "name": "Enterprise Customers",
+      "type": "simple",
+      "conditions": [{
+        "attribute": "customer_type",
+        "operator": "==",
+        "value": "enterprise"
+      }]
+    }]
+  }'
 ```
 
-3. サーバーが起動します（デフォルト: <http://localhost:8080）>
+## Database Cleanup
 
-## API エンドポイント
+To remove legacy tables after migration:
 
-### 認証
-
-- `POST /api/auth/login` - ログイン（JWT トークン取得）
-
-### 商品管理
-
-- `GET /api/products` - 商品一覧取得
-- `GET /api/products/:id` - 商品詳細取得
-- `PUT /api/products/:id` - 商品更新
-- `DELETE /api/products/:id` - 商品削除
-
-## テストユーザー
-
-以下のテストユーザーでログインできます：
-
-- **管理者**: alice (全権限)
-- **運用者**: bob (閲覧・編集)
-- **顧客**: charlie (閲覧のみ)
-
-ログイン時はパスワードとして `password` を使用してください。
-
-## 設定ファイル
-
-- `config/rbac_model.conf` - RBAC モデル定義
-- `config/abac_model.conf` - ABAC モデル定義
-
-## ディレクトリ構成
-
+```bash
+psql -U your_user -d authorization_demo -f cleanup_legacy_tables.sql
 ```
-.
-├── main.go                 # エントリーポイント
-├── config/                 # Casbin設定ファイル
-├── internal/
-│   ├── auth/              # 認証関連
-│   ├── middleware/        # ミドルウェア
-│   ├── handler/           # HTTPハンドラー
-│   ├── model/             # データモデル
-│   └── service/           # ビジネスロジック
-└── README.md
-```
+
+## Testing
+
+The system includes comprehensive test scenarios for:
+
+- User authentication and role assignment
+- Product access based on user attributes
+- Order processing with amount restrictions
+- Customer profile access control
+- Policy inheritance and priority handling
+
+## License
+
+MIT License

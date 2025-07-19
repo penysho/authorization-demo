@@ -5,19 +5,19 @@ import (
 	"time"
 )
 
-// PolicyCondition represents a structured policy condition
+// PolicyCondition represents a structured policy condition that can be applied to any resource
 type PolicyCondition struct {
-	ID         string          `json:"id" gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
-	ProductID  string          `json:"product_id" gorm:"type:varchar(36);not null;index"`
-	Product    *Product        `json:"product,omitempty" gorm:"foreignKey:ProductID;references:ID;constraint:OnDelete:CASCADE"`
-	Name       string          `json:"name"`
-	Type       string          `json:"type"` // "simple" or "composite"
-	Conditions json.RawMessage `json:"conditions" gorm:"type:jsonb"`
-	LogicalOp  string          `json:"logical_op,omitempty"` // "AND" or "OR"
-	Priority   int             `json:"priority" gorm:"default:0"`
-	Enabled    bool            `json:"enabled" gorm:"default:true"`
-	CreatedAt  time.Time       `json:"created_at"`
-	UpdatedAt  time.Time       `json:"updated_at"`
+	ID           string          `json:"id" gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
+	ResourceType string          `json:"resource_type" gorm:"type:varchar(50);not null;index"` // e.g., "product", "order", "customer"
+	ResourceID   string          `json:"resource_id" gorm:"type:varchar(36);not null;index"`
+	Name         string          `json:"name"`
+	Type         string          `json:"type"` // "simple" or "composite"
+	Conditions   json.RawMessage `json:"conditions" gorm:"type:jsonb"`
+	LogicalOp    string          `json:"logical_op,omitempty"` // "AND" or "OR"
+	Priority     int             `json:"priority" gorm:"default:0"`
+	Enabled      bool            `json:"enabled" gorm:"default:true"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
 }
 
 // SimpleCondition represents a single condition
@@ -27,12 +27,12 @@ type SimpleCondition struct {
 	Value     interface{} `json:"value"`     // e.g., 18, ["JP", "US"], true
 }
 
-// ProductAccessPolicy represents product access policy
-type ProductAccessPolicy struct {
-	ProductID    string            `json:"product_id" gorm:"type:varchar(36);primaryKey"`
-	Product      *Product          `json:"product,omitempty" gorm:"foreignKey:ProductID;references:ID;constraint:OnDelete:CASCADE"`
+// ResourceAccessPolicy represents access policy for any resource type
+type ResourceAccessPolicy struct {
+	ResourceType string            `json:"resource_type" gorm:"type:varchar(50);primaryKey"`
+	ResourceID   string            `json:"resource_id" gorm:"type:varchar(36);primaryKey"`
 	PolicyType   string            `json:"policy_type"` // "allow" or "deny"
-	Conditions   []PolicyCondition `json:"conditions,omitempty" gorm:"foreignKey:ProductID;references:ProductID"`
+	Conditions   []PolicyCondition `json:"conditions,omitempty" gorm:"foreignKey:ResourceType,ResourceID;references:ResourceType,ResourceID"`
 	Restrictions json.RawMessage   `json:"restrictions" gorm:"type:jsonb"`
 	CreatedBy    string            `json:"created_by"`
 	UpdatedAt    time.Time         `json:"updated_at"`
@@ -52,3 +52,12 @@ type TimeRestriction struct {
 	DaysOfWeek []string `json:"days_of_week"` // ["Mon", "Tue", "Wed", "Thu", "Fri"]
 	Timezone   string   `json:"timezone"`     // "Asia/Tokyo"
 }
+
+// Common resource types
+const (
+	ResourceTypeProduct  = "product"
+	ResourceTypeOrder    = "order"
+	ResourceTypeCustomer = "customer"
+	ResourceTypeInvoice  = "invoice"
+	ResourceTypeReport   = "report"
+)

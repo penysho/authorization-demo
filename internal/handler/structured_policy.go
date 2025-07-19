@@ -40,8 +40,10 @@ type SimpleConditionRequest struct {
 	Value     interface{} `json:"value" binding:"required"`
 }
 
-// ProductPolicyRequest は商品ポリシーの作成/更新リクエスト
-type ProductPolicyRequest struct {
+// ResourcePolicyRequest は汎用リソースポリシーの作成/更新リクエスト
+type ResourcePolicyRequest struct {
+	ResourceType string                     `json:"resource_type" binding:"required"`
+	ResourceID   string                     `json:"resource_id" binding:"required"`
 	PolicyType   string                     `json:"policy_type" binding:"required,oneof=allow deny"`
 	Conditions   []PolicyConditionRequest   `json:"conditions" binding:"required"`
 	Restrictions *PolicyRestrictionsRequest `json:"restrictions,omitempty"`
@@ -62,15 +64,9 @@ type TimeRestrictionRequest struct {
 	Timezone   string   `json:"timezone" binding:"required"`
 }
 
-// CreateProductPolicy は商品のポリシーを作成/更新
-func (h *StructuredPolicyHandler) CreateProductPolicy(c *gin.Context) {
-	productID := c.Param("id")
-	if productID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Product ID is required"})
-		return
-	}
-
-	var req ProductPolicyRequest
+// CreateResourcePolicy creates/updates a policy for any resource type
+func (h *StructuredPolicyHandler) CreateResourcePolicy(c *gin.Context) {
+	var req ResourcePolicyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   "Invalid request body",
@@ -87,22 +83,25 @@ func (h *StructuredPolicyHandler) CreateProductPolicy(c *gin.Context) {
 	}
 
 	// Convert request to service model
-	policy := model.ProductAccessPolicy{
-		ProductID:  productID,
-		PolicyType: req.PolicyType,
-		CreatedBy:  user.ID,
-		UpdatedAt:  time.Now(),
+	policy := model.ResourceAccessPolicy{
+		ResourceType: req.ResourceType,
+		ResourceID:   req.ResourceID,
+		PolicyType:   req.PolicyType,
+		CreatedBy:    user.ID,
+		UpdatedAt:    time.Now(),
 	}
 
 	// Convert conditions
 	conditions := make([]model.PolicyCondition, len(req.Conditions))
 	for i, condReq := range req.Conditions {
 		condition := model.PolicyCondition{
-			Name:      condReq.Name,
-			Type:      condReq.Type,
-			LogicalOp: condReq.LogicalOp,
-			Priority:  condReq.Priority,
-			Enabled:   true,
+			ResourceType: req.ResourceType,
+			ResourceID:   req.ResourceID,
+			Name:         condReq.Name,
+			Type:         condReq.Type,
+			LogicalOp:    condReq.LogicalOp,
+			Priority:     condReq.Priority,
+			Enabled:      true,
 		}
 
 		// Convert simple conditions to JSON
@@ -144,7 +143,7 @@ func (h *StructuredPolicyHandler) CreateProductPolicy(c *gin.Context) {
 	}
 
 	// Create or update policy
-	if err := h.policyEngine.CreateProductPolicy(c.Request.Context(), productID, policy, user.ID); err != nil {
+	if err := h.policyEngine.CreateResourcePolicy(c.Request.Context(), req.ResourceType, req.ResourceID, policy, user.ID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to create policy",
 			"details": err.Error(),
@@ -155,24 +154,27 @@ func (h *StructuredPolicyHandler) CreateProductPolicy(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Policy created successfully",
 		"policy": gin.H{
-			"product_id":  productID,
-			"policy_type": req.PolicyType,
-			"conditions":  req.Conditions,
-			"created_by":  user.ID,
-			"created_at":  time.Now(),
+			"resource_type": req.ResourceType,
+			"resource_id":   req.ResourceID,
+			"policy_type":   req.PolicyType,
+			"conditions":    req.Conditions,
+			"created_by":    user.ID,
+			"created_at":    time.Now(),
 		},
 	})
 }
 
-// GetProductPolicy は商品のポリシーを取得
-func (h *StructuredPolicyHandler) GetProductPolicy(c *gin.Context) {
-	productID := c.Param("id")
-	if productID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Product ID is required"})
+// GetResourcePolicy gets a policy for any resource type
+func (h *StructuredPolicyHandler) GetResourcePolicy(c *gin.Context) {
+	resourceType := c.Query("resource_type")
+	resourceID := c.Query("resource_id")
+
+	if resourceType == "" || resourceID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "resource_type and resource_id are required"})
 		return
 	}
 
-	policy, err := h.policyEngine.GetProductPolicy(c.Request.Context(), productID)
+	policy, err := h.policyEngine.GetResourcePolicy(c.Request.Context(), resourceType, resourceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to get policy",
@@ -187,10 +189,11 @@ func (h *StructuredPolicyHandler) GetProductPolicy(c *gin.Context) {
 // TestPolicy は指定されたユーザーとポリシーでアクセス可否をテスト
 func (h *StructuredPolicyHandler) TestPolicy(c *gin.Context) {
 	var req struct {
-		UserID    string               `json:"user_id" binding:"required"`
-		ProductID string               `json:"product_id" binding:"required"`
-		Action    string               `json:"action" binding:"required"`
-		Policy    ProductPolicyRequest `json:"policy" binding:"required"`
+		UserID       string                `json:"user_id" binding:"required"`
+		ResourceType string                `json:"resource_type" binding:"required"`
+		ResourceID   string                `json:"resource_id" binding:"required"`
+		Action       string                `json:"action" binding:"required"`
+		Policy       ResourcePolicyRequest `json:"policy" binding:"required"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -278,14 +281,53 @@ func (h *StructuredPolicyHandler) GetPolicyTemplates(c *gin.Context) {
 		},
 		{
 			"id":          "business_hours",
-			"name":        "営業時間内のみ",
-			"description": "営業時間内のみアクセス可能",
-			"template": PolicyRestrictionsRequest{
+			"name":        "営業時間制限",
+			"description": "指定した時間帯のみアクセス可能",
+			"template": PolicyConditionRequest{
+				Name:       "営業時間制限",
+				Type:       "simple",
+				Conditions: []SimpleConditionRequest{}, // 時間制限は別の方法で設定
+			},
+			"restrictions": PolicyRestrictionsRequest{
 				TimeRestrictions: &TimeRestrictionRequest{
 					StartTime:  "09:00",
 					EndTime:    "18:00",
 					DaysOfWeek: []string{"Mon", "Tue", "Wed", "Thu", "Fri"},
 					Timezone:   "Asia/Tokyo",
+				},
+			},
+		},
+		{
+			"id":            "high_value_order",
+			"name":          "高額注文制限",
+			"description":   "指定金額以上の注文に対する制限",
+			"resource_type": "order",
+			"template": PolicyConditionRequest{
+				Name: "高額注文制限",
+				Type: "simple",
+				Conditions: []SimpleConditionRequest{
+					{
+						Attribute: "amount",
+						Operator:  ">",
+						Value:     10000,
+					},
+				},
+			},
+		},
+		{
+			"id":            "enterprise_customer",
+			"name":          "エンタープライズ顧客限定",
+			"description":   "エンタープライズ顧客のみアクセス可能",
+			"resource_type": "customer",
+			"template": PolicyConditionRequest{
+				Name: "エンタープライズ顧客限定",
+				Type: "simple",
+				Conditions: []SimpleConditionRequest{
+					{
+						Attribute: "customer_type",
+						Operator:  "==",
+						Value:     "enterprise",
+					},
 				},
 			},
 		},

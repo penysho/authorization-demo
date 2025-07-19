@@ -9,7 +9,7 @@ import (
 )
 
 // RequirePermission は認可サービス用のミドルウェアを返す
-func RequirePermission(authzService *service.AuthorizationService, resource, action string) gin.HandlerFunc {
+func RequirePermission(authzService *service.AuthorizationService, resourceType, action string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// コンテキストからユーザー情報を取得
 		user, exists := GetUserFromContext(c)
@@ -26,7 +26,7 @@ func RequirePermission(authzService *service.AuthorizationService, resource, act
 		}
 
 		// 権限チェック
-		allowed, err := authzService.CheckPermission(user, resource, action, resourceID)
+		allowed, err := authzService.CheckPermission(user, resourceType, action, resourceID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Authorization check failed"})
 			c.Abort()
