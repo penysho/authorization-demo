@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -28,9 +29,23 @@ func NewStructuredPolicyHandler(policyEngine *service.PolicyEngine) *StructuredP
 type PolicyConditionRequest struct {
 	Name       string                   `json:"name" binding:"required"`
 	Type       string                   `json:"type" binding:"required,oneof=simple composite"`
-	Conditions []SimpleConditionRequest `json:"conditions,omitempty"`
-	LogicalOp  string                   `json:"logical_op,omitempty"`
+	Conditions []SimpleConditionRequest `json:"conditions,omitempty"` // For simple type compatibility
 	Priority   int                      `json:"priority"`
+	// New field for composite conditions
+	CompositeCondition *CompositeConditionRequest `json:"composite_condition,omitempty"`
+}
+
+// CompositeConditionRequest は複合条件のリクエスト
+type CompositeConditionRequest struct {
+	LogicalOp  string                   `json:"logical_op" binding:"required,oneof=AND OR"`
+	Conditions []NestedConditionRequest `json:"conditions" binding:"required"`
+}
+
+// NestedConditionRequest は入れ子になった条件のリクエスト（simple or composite）
+type NestedConditionRequest struct {
+	Type      string                     `json:"type" binding:"required,oneof=simple composite"`
+	Simple    *SimpleConditionRequest    `json:"simple,omitempty"`
+	Composite *CompositeConditionRequest `json:"composite,omitempty"`
 }
 
 // SimpleConditionRequest は単純な条件のリクエスト
@@ -64,6 +79,161 @@ type TimeRestrictionRequest struct {
 	Timezone   string   `json:"timezone" binding:"required"`
 }
 
+// processCondition processes a single policy condition (simple or composite)
+func (h *StructuredPolicyHandler) processCondition(condReq PolicyConditionRequest, resourceType, resourceID string) (model.PolicyCondition, error) {
+	condition := model.PolicyCondition{
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+		Name:         condReq.Name,
+		Type:         condReq.Type,
+		Priority:     condReq.Priority,
+		Enabled:      true,
+	}
+
+	switch condReq.Type {
+	case "simple":
+		return h.processSimpleCondition(condition, condReq)
+	case "composite":
+		return h.processCompositeCondition(condition, condReq)
+	default:
+		return condition, fmt.Errorf("unsupported condition type: %s", condReq.Type)
+	}
+}
+
+// processSimpleCondition processes simple conditions
+func (h *StructuredPolicyHandler) processSimpleCondition(condition model.PolicyCondition, condReq PolicyConditionRequest) (model.PolicyCondition, error) {
+	// Support both old format (Conditions array) and new format (CompositeCondition)
+	var simpleConditions []model.SimpleCondition
+
+	if len(condReq.Conditions) > 0 {
+		// Legacy format support
+		simpleConditions = make([]model.SimpleCondition, len(condReq.Conditions))
+		for j, sc := range condReq.Conditions {
+			if err := h.validateSimpleCondition(sc); err != nil {
+				return condition, fmt.Errorf("invalid simple condition at index %d: %w", j, err)
+			}
+			simpleConditions[j] = model.SimpleCondition{
+				Attribute: sc.Attribute,
+				Operator:  sc.Operator,
+				Value:     sc.Value,
+			}
+		}
+	} else {
+		// New format - should not be used for simple conditions
+		return condition, fmt.Errorf("simple condition should use 'conditions' array")
+	}
+
+	conditionsJSON, err := json.Marshal(simpleConditions)
+	if err != nil {
+		return condition, fmt.Errorf("failed to marshal simple conditions: %w", err)
+	}
+	condition.Conditions = conditionsJSON
+
+	return condition, nil
+}
+
+// processCompositeCondition processes composite conditions
+func (h *StructuredPolicyHandler) processCompositeCondition(condition model.PolicyCondition, condReq PolicyConditionRequest) (model.PolicyCondition, error) {
+	if condReq.CompositeCondition == nil {
+		return condition, fmt.Errorf("composite condition data is required for composite type")
+	}
+
+	compositeCondition, err := h.buildCompositeCondition(*condReq.CompositeCondition)
+	if err != nil {
+		return condition, fmt.Errorf("failed to build composite condition: %w", err)
+	}
+
+	conditionsJSON, err := json.Marshal(compositeCondition)
+	if err != nil {
+		return condition, fmt.Errorf("failed to marshal composite condition: %w", err)
+	}
+
+	condition.Conditions = conditionsJSON
+	condition.LogicalOp = condReq.CompositeCondition.LogicalOp
+
+	return condition, nil
+}
+
+// buildCompositeCondition recursively builds composite conditions
+func (h *StructuredPolicyHandler) buildCompositeCondition(compReq CompositeConditionRequest) (model.CompositeCondition, error) {
+	if len(compReq.Conditions) == 0 {
+		return model.CompositeCondition{}, fmt.Errorf("composite condition must have at least one sub-condition")
+	}
+
+	conditions := make([]model.ConditionDefinition, len(compReq.Conditions))
+
+	for i, nestedReq := range compReq.Conditions {
+		switch nestedReq.Type {
+		case "simple":
+			if nestedReq.Simple == nil {
+				return model.CompositeCondition{}, fmt.Errorf("simple condition data is required at index %d", i)
+			}
+
+			if err := h.validateSimpleCondition(*nestedReq.Simple); err != nil {
+				return model.CompositeCondition{}, fmt.Errorf("invalid simple condition at index %d: %w", i, err)
+			}
+
+			conditions[i] = model.ConditionDefinition{
+				Type: "simple",
+				Simple: &model.SimpleCondition{
+					Attribute: nestedReq.Simple.Attribute,
+					Operator:  nestedReq.Simple.Operator,
+					Value:     nestedReq.Simple.Value,
+				},
+			}
+
+		case "composite":
+			if nestedReq.Composite == nil {
+				return model.CompositeCondition{}, fmt.Errorf("composite condition data is required at index %d", i)
+			}
+
+			// Recursive call for nested composite conditions
+			nestedComposite, err := h.buildCompositeCondition(*nestedReq.Composite)
+			if err != nil {
+				return model.CompositeCondition{}, fmt.Errorf("failed to build nested composite condition at index %d: %w", i, err)
+			}
+
+			conditions[i] = model.ConditionDefinition{
+				Type:      "composite",
+				Composite: &nestedComposite,
+			}
+
+		default:
+			return model.CompositeCondition{}, fmt.Errorf("unsupported nested condition type: %s at index %d", nestedReq.Type, i)
+		}
+	}
+
+	return model.CompositeCondition{
+		LogicalOp:  compReq.LogicalOp,
+		Conditions: conditions,
+	}, nil
+}
+
+// validateSimpleCondition validates a simple condition request
+func (h *StructuredPolicyHandler) validateSimpleCondition(sc SimpleConditionRequest) error {
+	if sc.Attribute == "" {
+		return fmt.Errorf("attribute is required")
+	}
+	if sc.Operator == "" {
+		return fmt.Errorf("operator is required")
+	}
+	if sc.Value == nil {
+		return fmt.Errorf("value is required")
+	}
+
+	// Add more specific validation as needed
+	validOperators := map[string]bool{
+		"==": true, "!=": true, ">": true, ">=": true, "<": true, "<=": true,
+		"in": true, "not_in": true, "contains": true, "not_contains": true,
+	}
+
+	if !validOperators[sc.Operator] {
+		return fmt.Errorf("unsupported operator: %s", sc.Operator)
+	}
+
+	return nil
+}
+
 // CreateResourcePolicy creates/updates a policy for any resource type
 func (h *StructuredPolicyHandler) CreateResourcePolicy(c *gin.Context) {
 	var req ResourcePolicyRequest
@@ -94,37 +264,14 @@ func (h *StructuredPolicyHandler) CreateResourcePolicy(c *gin.Context) {
 	// Convert conditions
 	conditions := make([]model.PolicyCondition, len(req.Conditions))
 	for i, condReq := range req.Conditions {
-		condition := model.PolicyCondition{
-			ResourceType: req.ResourceType,
-			ResourceID:   req.ResourceID,
-			Name:         condReq.Name,
-			Type:         condReq.Type,
-			LogicalOp:    condReq.LogicalOp,
-			Priority:     condReq.Priority,
-			Enabled:      true,
+		condition, err := h.processCondition(condReq, req.ResourceType, req.ResourceID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Invalid policy condition",
+				"details": err.Error(),
+			})
+			return
 		}
-
-		// Convert simple conditions to JSON
-		if condReq.Type == "simple" {
-			simpleConditions := make([]model.SimpleCondition, len(condReq.Conditions))
-			for j, sc := range condReq.Conditions {
-				simpleConditions[j] = model.SimpleCondition{
-					Attribute: sc.Attribute,
-					Operator:  sc.Operator,
-					Value:     sc.Value,
-				}
-			}
-			conditionsJSON, err := json.Marshal(simpleConditions)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{
-					"error":   "Failed to process conditions",
-					"details": err.Error(),
-				})
-				return
-			}
-			condition.Conditions = conditionsJSON
-		}
-
 		conditions[i] = condition
 	}
 	policy.Conditions = conditions
@@ -327,6 +474,120 @@ func (h *StructuredPolicyHandler) GetPolicyTemplates(c *gin.Context) {
 						Attribute: "customer_type",
 						Operator:  "==",
 						Value:     "enterprise",
+					},
+				},
+			},
+		},
+		{
+			"id":          "age_and_premium_composite",
+			"name":        "年齢制限とプレミアム会員（AND条件）",
+			"description": "18歳以上かつプレミアム会員のユーザーのみアクセス可能",
+			"template": PolicyConditionRequest{
+				Name: "年齢制限とプレミアム会員",
+				Type: "composite",
+				CompositeCondition: &CompositeConditionRequest{
+					LogicalOp: "AND",
+					Conditions: []NestedConditionRequest{
+						{
+							Type: "simple",
+							Simple: &SimpleConditionRequest{
+								Attribute: "age",
+								Operator:  ">=",
+								Value:     18,
+							},
+						},
+						{
+							Type: "simple",
+							Simple: &SimpleConditionRequest{
+								Attribute: "premium",
+								Operator:  "==",
+								Value:     true,
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			"id":          "vip_or_special_region_composite",
+			"name":        "VIP会員または特別地域（OR条件）",
+			"description": "VIPレベル3以上またはJP/USのユーザーがアクセス可能",
+			"template": PolicyConditionRequest{
+				Name: "VIP会員または特別地域",
+				Type: "composite",
+				CompositeCondition: &CompositeConditionRequest{
+					LogicalOp: "OR",
+					Conditions: []NestedConditionRequest{
+						{
+							Type: "simple",
+							Simple: &SimpleConditionRequest{
+								Attribute: "vip_level",
+								Operator:  ">=",
+								Value:     3,
+							},
+						},
+						{
+							Type: "simple",
+							Simple: &SimpleConditionRequest{
+								Attribute: "location",
+								Operator:  "in",
+								Value:     []string{"JP", "US"},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			"id":          "complex_nested_composite",
+			"name":        "複雑な入れ子条件（複合の複合）",
+			"description": "プレミアム会員で（VIP3以上またはJP地域）かつ18歳以上",
+			"template": PolicyConditionRequest{
+				Name: "複雑な入れ子条件",
+				Type: "composite",
+				CompositeCondition: &CompositeConditionRequest{
+					LogicalOp: "AND",
+					Conditions: []NestedConditionRequest{
+						{
+							Type: "simple",
+							Simple: &SimpleConditionRequest{
+								Attribute: "premium",
+								Operator:  "==",
+								Value:     true,
+							},
+						},
+						{
+							Type: "composite",
+							Composite: &CompositeConditionRequest{
+								LogicalOp: "OR",
+								Conditions: []NestedConditionRequest{
+									{
+										Type: "simple",
+										Simple: &SimpleConditionRequest{
+											Attribute: "vip_level",
+											Operator:  ">=",
+											Value:     3,
+										},
+									},
+									{
+										Type: "simple",
+										Simple: &SimpleConditionRequest{
+											Attribute: "location",
+											Operator:  "==",
+											Value:     "JP",
+										},
+									},
+								},
+							},
+						},
+						{
+							Type: "simple",
+							Simple: &SimpleConditionRequest{
+								Attribute: "age",
+								Operator:  ">=",
+								Value:     18,
+							},
+						},
 					},
 				},
 			},

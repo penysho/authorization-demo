@@ -27,6 +27,19 @@ type SimpleCondition struct {
 	Value     interface{} `json:"value"`     // e.g., 18, ["JP", "US"], true
 }
 
+// CompositeCondition represents a complex condition with multiple sub-conditions
+type CompositeCondition struct {
+	LogicalOp  string                `json:"logical_op"` // "AND" or "OR"
+	Conditions []ConditionDefinition `json:"conditions"` // Array of simple or composite conditions
+}
+
+// ConditionDefinition represents either a simple or composite condition
+type ConditionDefinition struct {
+	Type      string              `json:"type"`                // "simple" or "composite"
+	Simple    *SimpleCondition    `json:"simple,omitempty"`    // For simple conditions
+	Composite *CompositeCondition `json:"composite,omitempty"` // For composite conditions
+}
+
 // ResourceAccessPolicy represents access policy for any resource type
 type ResourceAccessPolicy struct {
 	ResourceType string            `json:"resource_type" gorm:"type:varchar(50);primaryKey"`
