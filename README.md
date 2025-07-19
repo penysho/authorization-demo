@@ -151,14 +151,6 @@ curl -X POST http://localhost:8080/api/structured-policies/resources \
   }'
 ```
 
-## Database Cleanup
-
-To remove legacy tables after migration:
-
-```bash
-psql -U your_user -d authorization_demo -f cleanup_legacy_tables.sql
-```
-
 ## Testing
 
 The system includes comprehensive test scenarios for:
