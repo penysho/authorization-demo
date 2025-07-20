@@ -47,7 +47,7 @@ func main() {
 	authHandler := handler.NewAuthHandler(authService)
 	productHandler := handler.NewProductHandler(productService, authzService)
 	casbinPolicyHandler := handler.NewCasbinPolicyHandler(authzService)
-	structuredPolicyHandler := handler.NewStructuredPolicyHandler(structuredPolicyEngine)
+	structuredPolicyHandler := handler.NewStructuredPolicyHandler(structuredPolicyEngine, userService)
 
 	// Setup Gin router
 	r := gin.Default()

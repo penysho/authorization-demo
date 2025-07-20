@@ -92,7 +92,7 @@ func MigratePolicyStoreSchema(db *gorm.DB) error {
 
 // MigratePolicyEngineSchema migrates policy engine tables
 func MigratePolicyEngineSchema(db *gorm.DB) error {
-	// Create resource_access_policies table (new generic table)
+	// Create resource_access_policies table
 	if err := db.AutoMigrate(&model.ResourceAccessPolicy{}); err != nil {
 		return fmt.Errorf("failed to migrate ResourceAccessPolicy table: %w", err)
 	}

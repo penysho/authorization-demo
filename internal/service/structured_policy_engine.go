@@ -32,27 +32,22 @@ func (pe *PolicyEngine) EvaluateResourceAccess(ctx context.Context, user *model.
 
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return true, nil
+			return true, nil // Default allow if no policy exists
 		}
 		return false, fmt.Errorf("failed to load resource policy: %w", err)
 	}
 
-	// Evaluate conditions
+	// Evaluate conditions - all conditions are evaluated as a logical OR
 	allowed := false
 	for _, condition := range policy.Conditions {
-		result, err := pe.evaluateCondition(ctx, user, condition)
+		result, err := pe.EvaluateCondition(ctx, user, condition)
 		if err != nil {
 			return false, fmt.Errorf("failed to evaluate condition: %w", err)
 		}
 
-		if condition.LogicalOp == "OR" && result {
+		if result {
 			allowed = true
-			break
-		} else if condition.LogicalOp == "AND" && !result {
-			allowed = false
-			break
-		} else if result {
-			allowed = true
+			break // If any condition passes, allow access
 		}
 	}
 
@@ -72,38 +67,15 @@ func (pe *PolicyEngine) EvaluateResourceAccess(ctx context.Context, user *model.
 	return allowed, nil
 }
 
-// evaluateCondition は単一の条件を評価
-func (pe *PolicyEngine) evaluateCondition(ctx context.Context, user *model.User, condition model.PolicyCondition) (bool, error) {
-	// Load resource data based on resource type
-	resourceData, err := pe.loadResourceData(ctx, condition.ResourceType, condition.ResourceID)
-	if err != nil {
-		return false, fmt.Errorf("failed to load resource data: %w", err)
+// EvaluateCondition evaluates a single condition using CompositeCondition structure
+func (pe *PolicyEngine) EvaluateCondition(ctx context.Context, user *model.User, condition model.PolicyCondition) (bool, error) {
+	// All conditions use CompositeCondition structure
+	var compositeCondition model.CompositeCondition
+	if err := json.Unmarshal(condition.Condition, &compositeCondition); err != nil {
+		return false, fmt.Errorf("failed to unmarshal composite condition: %w", err)
 	}
 
-	if condition.Type == "composite" {
-		// Handle composite conditions
-		var compositeCondition model.CompositeCondition
-		if err := json.Unmarshal(condition.Conditions, &compositeCondition); err != nil {
-			return false, fmt.Errorf("failed to unmarshal composite condition: %w", err)
-		}
-
-		return pe.evaluateCompositeCondition(ctx, user, condition.ResourceType, condition.ResourceID, compositeCondition)
-	}
-
-	// Handle simple conditions
-	var simpleConditions []model.SimpleCondition
-	if err := json.Unmarshal(condition.Conditions, &simpleConditions); err != nil {
-		return false, fmt.Errorf("failed to unmarshal simple conditions: %w", err)
-	}
-
-	for _, cond := range simpleConditions {
-		result := pe.evaluateSimpleCondition(user, condition.ResourceType, resourceData, cond)
-		if !result {
-			return false, nil
-		}
-	}
-
-	return true, nil
+	return pe.evaluateCompositeCondition(ctx, user, condition.ResourceType, condition.ResourceID, compositeCondition)
 }
 
 // evaluateCompositeCondition evaluates composite conditions recursively
@@ -112,52 +84,57 @@ func (pe *PolicyEngine) evaluateCompositeCondition(ctx context.Context, user *mo
 		return false, fmt.Errorf("composite condition must have at least one condition")
 	}
 
-	results := make([]bool, len(composite.Conditions))
+	// Handle single condition (simple case)
+	if len(composite.Conditions) == 1 && composite.LogicalOp == "" {
+		condDef := composite.Conditions[0]
+		if condDef.Type == "simple" && condDef.Simple != nil {
+			return pe.evaluateSimpleConditionDirect(user, resourceType, resourceID, ctx, *condDef.Simple), nil
+		}
+		if condDef.Type == "composite" && condDef.Composite != nil {
+			return pe.evaluateCompositeCondition(ctx, user, resourceType, resourceID, *condDef.Composite)
+		}
+		return false, fmt.Errorf("invalid single condition definition")
+	}
 
-	for i, condDef := range composite.Conditions {
+	// Handle multiple conditions with logical operator
+	if composite.LogicalOp == "" {
+		return false, fmt.Errorf("logical operator is required for multiple conditions")
+	}
+
+	// Evaluate conditions with early exit optimization
+	for _, condDef := range composite.Conditions {
 		var result bool
 		var err error
 
 		switch condDef.Type {
 		case "simple":
 			if condDef.Simple == nil {
-				return false, fmt.Errorf("simple condition data is missing at index %d", i)
+				return false, fmt.Errorf("simple condition data is missing")
 			}
 			result = pe.evaluateSimpleConditionDirect(user, resourceType, resourceID, ctx, *condDef.Simple)
 		case "composite":
 			if condDef.Composite == nil {
-				return false, fmt.Errorf("composite condition data is missing at index %d", i)
+				return false, fmt.Errorf("composite condition data is missing")
 			}
 			result, err = pe.evaluateCompositeCondition(ctx, user, resourceType, resourceID, *condDef.Composite)
 			if err != nil {
-				return false, fmt.Errorf("failed to evaluate nested composite condition at index %d: %w", i, err)
+				return false, fmt.Errorf("failed to evaluate nested composite condition: %w", err)
 			}
 		default:
-			return false, fmt.Errorf("unknown condition type: %s at index %d", condDef.Type, i)
+			return false, fmt.Errorf("unknown condition type: %s", condDef.Type)
 		}
 
-		results[i] = result
+		// Early exit optimization
+		if composite.LogicalOp == "OR" && result {
+			return true, nil
+		}
+		if composite.LogicalOp == "AND" && !result {
+			return false, nil
+		}
 	}
 
-	// Apply logical operator
-	switch composite.LogicalOp {
-	case "OR":
-		for _, result := range results {
-			if result {
-				return true, nil
-			}
-		}
-		return false, nil
-	case "AND":
-		for _, result := range results {
-			if !result {
-				return false, nil
-			}
-		}
-		return true, nil
-	default:
-		return false, fmt.Errorf("unknown logical operator: %s", composite.LogicalOp)
-	}
+	// Final result based on logical operator
+	return composite.LogicalOp == "AND", nil
 }
 
 // evaluateSimpleConditionDirect evaluates a simple condition directly
@@ -198,7 +175,7 @@ func (pe *PolicyEngine) loadResourceData(ctx context.Context, resourceType, reso
 	}
 }
 
-// evaluateSimpleCondition は単純な条件を評価
+// evaluateSimpleCondition evaluates a simple condition
 func (pe *PolicyEngine) evaluateSimpleCondition(user *model.User, resourceType string, resourceData interface{}, condition model.SimpleCondition) bool {
 	// First, try user attributes
 	switch condition.Attribute {
@@ -427,64 +404,33 @@ func (pe *PolicyEngine) validateResourcePolicy(policy *model.ResourceAccessPolic
 
 // validateCondition validates a single condition
 func (pe *PolicyEngine) validateCondition(condition *model.PolicyCondition) error {
-	// Validate condition type
-	if condition.Type != "simple" && condition.Type != "composite" {
-		return fmt.Errorf("invalid condition type: %s (must be 'simple' or 'composite')", condition.Type)
-	}
-
-	// Validate logical operator for composite conditions
-	if condition.Type == "composite" {
-		if condition.LogicalOp != "AND" && condition.LogicalOp != "OR" {
-			return fmt.Errorf("invalid logical operator for composite condition: %s (must be 'AND' or 'OR')", condition.LogicalOp)
-		}
-	}
-
-	// Validate condition content based on type
-	if condition.Type == "simple" {
-		return pe.validateSimpleCondition(condition)
-	} else {
-		return pe.validateCompositeConditionStructure(condition)
-	}
-}
-
-// validateSimpleCondition validates simple condition structure
-func (pe *PolicyEngine) validateSimpleCondition(condition *model.PolicyCondition) error {
-	var simpleConditions []model.SimpleCondition
-	if err := json.Unmarshal(condition.Conditions, &simpleConditions); err != nil {
-		return fmt.Errorf("failed to unmarshal simple conditions: %w", err)
-	}
-
-	if len(simpleConditions) == 0 {
-		return fmt.Errorf("simple condition must have at least one condition")
-	}
-
-	for _, simpleCond := range simpleConditions {
-		if err := pe.validateSimpleConditionItem(simpleCond); err != nil {
-			return fmt.Errorf("invalid simple condition item: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// validateCompositeConditionStructure validates composite condition structure
-func (pe *PolicyEngine) validateCompositeConditionStructure(condition *model.PolicyCondition) error {
+	// All conditions use CompositeCondition structure
 	var compositeCondition model.CompositeCondition
-	if err := json.Unmarshal(condition.Conditions, &compositeCondition); err != nil {
+	if err := json.Unmarshal(condition.Condition, &compositeCondition); err != nil {
 		return fmt.Errorf("failed to unmarshal composite condition: %w", err)
 	}
 
-	if len(compositeCondition.Conditions) == 0 {
+	return pe.validateCompositeConditionStructure(compositeCondition)
+}
+
+// validateCompositeConditionStructure validates composite condition structure
+func (pe *PolicyEngine) validateCompositeConditionStructure(composite model.CompositeCondition) error {
+	if len(composite.Conditions) == 0 {
 		return fmt.Errorf("composite condition must have at least one sub-condition")
 	}
 
-	// Validate logical operator
-	if compositeCondition.LogicalOp != "AND" && compositeCondition.LogicalOp != "OR" {
-		return fmt.Errorf("invalid logical operator: %s (must be 'AND' or 'OR')", compositeCondition.LogicalOp)
+	// Validate logical operator for multiple conditions
+	if len(composite.Conditions) > 1 {
+		if composite.LogicalOp != "AND" && composite.LogicalOp != "OR" {
+			return fmt.Errorf("invalid logical operator: %s (must be 'AND' or 'OR')", composite.LogicalOp)
+		}
+	} else if composite.LogicalOp != "" {
+		// For single conditions, logical operator should be empty
+		return fmt.Errorf("logical operator should be empty for single conditions")
 	}
 
 	// Recursively validate sub-conditions
-	for i, condDef := range compositeCondition.Conditions {
+	for i, condDef := range composite.Conditions {
 		if err := pe.validateConditionDefinition(condDef); err != nil {
 			return fmt.Errorf("invalid condition definition at index %d: %w", i, err)
 		}
@@ -510,17 +456,7 @@ func (pe *PolicyEngine) validateConditionDefinition(condDef model.ConditionDefin
 		if condDef.Composite == nil {
 			return fmt.Errorf("composite condition data is required for composite type")
 		}
-		// Validate logical operator
-		if condDef.Composite.LogicalOp != "AND" && condDef.Composite.LogicalOp != "OR" {
-			return fmt.Errorf("invalid logical operator in nested composite: %s (must be 'AND' or 'OR')", condDef.Composite.LogicalOp)
-		}
-		// Recursively validate nested conditions
-		for i, nestedCondDef := range condDef.Composite.Conditions {
-			if err := pe.validateConditionDefinition(nestedCondDef); err != nil {
-				return fmt.Errorf("invalid nested condition at index %d: %w", i, err)
-			}
-		}
-		return nil
+		return pe.validateCompositeConditionStructure(*condDef.Composite)
 	default:
 		return fmt.Errorf("unknown condition definition type: %s", condDef.Type)
 	}
@@ -631,4 +567,9 @@ func (pe *PolicyEngine) evaluateCustomerAttribute(customer *model.Customer, cond
 		return pe.evaluateNumericCondition(float64(accountAge), condition.Operator, condition.Value)
 	}
 	return false
+}
+
+// CheckTimeRestriction checks time restriction
+func (pe *PolicyEngine) CheckTimeRestriction(restriction *model.TimeRestriction) bool {
+	return pe.checkTimeRestriction(restriction)
 }

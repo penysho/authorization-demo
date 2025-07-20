@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -16,28 +17,28 @@ import (
 // StructuredPolicyHandler は構造化ポリシーエンジンのための管理画面用ハンドラー
 type StructuredPolicyHandler struct {
 	policyEngine *service.PolicyEngine
+	userService  service.UserService
 }
 
 // NewStructuredPolicyHandler creates a new structured policy handler
-func NewStructuredPolicyHandler(policyEngine *service.PolicyEngine) *StructuredPolicyHandler {
+func NewStructuredPolicyHandler(policyEngine *service.PolicyEngine, userService service.UserService) *StructuredPolicyHandler {
 	return &StructuredPolicyHandler{
 		policyEngine: policyEngine,
+		userService:  userService,
 	}
 }
 
-// PolicyConditionRequest は管理画面からのポリシー条件リクエスト
+// PolicyConditionRequest は管理画面からのポリシー条件リクエスト（統一版）
 type PolicyConditionRequest struct {
-	Name       string                   `json:"name" binding:"required"`
-	Type       string                   `json:"type" binding:"required,oneof=simple composite"`
-	Conditions []SimpleConditionRequest `json:"conditions,omitempty"` // For simple type compatibility
-	Priority   int                      `json:"priority"`
-	// New field for composite conditions
-	CompositeCondition *CompositeConditionRequest `json:"composite_condition,omitempty"`
+	Name        string                    `json:"name" binding:"required"`
+	Description string                    `json:"description"`
+	Condition   CompositeConditionRequest `json:"condition" binding:"required"`
+	Priority    int                       `json:"priority"`
 }
 
 // CompositeConditionRequest は複合条件のリクエスト
 type CompositeConditionRequest struct {
-	LogicalOp  string                   `json:"logical_op" binding:"required,oneof=AND OR"`
+	LogicalOp  string                   `json:"logical_op,omitempty"` // "AND" or "OR" - optional for single conditions
 	Conditions []NestedConditionRequest `json:"conditions" binding:"required"`
 }
 
@@ -79,85 +80,49 @@ type TimeRestrictionRequest struct {
 	Timezone   string   `json:"timezone" binding:"required"`
 }
 
-// processCondition processes a single policy condition (simple or composite)
+// processCondition processes a policy condition (unified composite approach)
 func (h *StructuredPolicyHandler) processCondition(condReq PolicyConditionRequest, resourceType, resourceID string) (model.PolicyCondition, error) {
 	condition := model.PolicyCondition{
 		ResourceType: resourceType,
 		ResourceID:   resourceID,
 		Name:         condReq.Name,
-		Type:         condReq.Type,
+		Description:  condReq.Description,
 		Priority:     condReq.Priority,
 		Enabled:      true,
 	}
 
-	switch condReq.Type {
-	case "simple":
-		return h.processSimpleCondition(condition, condReq)
-	case "composite":
-		return h.processCompositeCondition(condition, condReq)
-	default:
-		return condition, fmt.Errorf("unsupported condition type: %s", condReq.Type)
-	}
-}
-
-// processSimpleCondition processes simple conditions
-func (h *StructuredPolicyHandler) processSimpleCondition(condition model.PolicyCondition, condReq PolicyConditionRequest) (model.PolicyCondition, error) {
-	// Support both old format (Conditions array) and new format (CompositeCondition)
-	var simpleConditions []model.SimpleCondition
-
-	if len(condReq.Conditions) > 0 {
-		// Legacy format support
-		simpleConditions = make([]model.SimpleCondition, len(condReq.Conditions))
-		for j, sc := range condReq.Conditions {
-			if err := h.validateSimpleCondition(sc); err != nil {
-				return condition, fmt.Errorf("invalid simple condition at index %d: %w", j, err)
-			}
-			simpleConditions[j] = model.SimpleCondition{
-				Attribute: sc.Attribute,
-				Operator:  sc.Operator,
-				Value:     sc.Value,
-			}
-		}
-	} else {
-		// New format - should not be used for simple conditions
-		return condition, fmt.Errorf("simple condition should use 'conditions' array")
-	}
-
-	conditionsJSON, err := json.Marshal(simpleConditions)
-	if err != nil {
-		return condition, fmt.Errorf("failed to marshal simple conditions: %w", err)
-	}
-	condition.Conditions = conditionsJSON
-
-	return condition, nil
-}
-
-// processCompositeCondition processes composite conditions
-func (h *StructuredPolicyHandler) processCompositeCondition(condition model.PolicyCondition, condReq PolicyConditionRequest) (model.PolicyCondition, error) {
-	if condReq.CompositeCondition == nil {
-		return condition, fmt.Errorf("composite condition data is required for composite type")
-	}
-
-	compositeCondition, err := h.buildCompositeCondition(*condReq.CompositeCondition)
+	// Build composite condition
+	compositeCondition, err := h.buildCompositeCondition(condReq.Condition)
 	if err != nil {
 		return condition, fmt.Errorf("failed to build composite condition: %w", err)
 	}
 
-	conditionsJSON, err := json.Marshal(compositeCondition)
+	// Marshal to JSON
+	conditionJSON, err := json.Marshal(compositeCondition)
 	if err != nil {
 		return condition, fmt.Errorf("failed to marshal composite condition: %w", err)
 	}
 
-	condition.Conditions = conditionsJSON
-	condition.LogicalOp = condReq.CompositeCondition.LogicalOp
-
+	condition.Condition = conditionJSON
 	return condition, nil
 }
 
 // buildCompositeCondition recursively builds composite conditions
 func (h *StructuredPolicyHandler) buildCompositeCondition(compReq CompositeConditionRequest) (model.CompositeCondition, error) {
 	if len(compReq.Conditions) == 0 {
-		return model.CompositeCondition{}, fmt.Errorf("composite condition must have at least one sub-condition")
+		return model.CompositeCondition{}, fmt.Errorf("condition must have at least one sub-condition")
+	}
+
+	// Validate logical operator if provided
+	if compReq.LogicalOp != "" && compReq.LogicalOp != "AND" && compReq.LogicalOp != "OR" {
+		return model.CompositeCondition{}, fmt.Errorf("invalid logical operator: %s (must be 'AND' or 'OR')", compReq.LogicalOp)
+	}
+
+	// If single condition and no logical operator, it's a simple composite
+	if len(compReq.Conditions) == 1 && compReq.LogicalOp == "" {
+		// This is a simple condition wrapped in composite structure
+	} else if len(compReq.Conditions) > 1 && compReq.LogicalOp == "" {
+		return model.CompositeCondition{}, fmt.Errorf("logical operator is required for multiple conditions")
 	}
 
 	conditions := make([]model.ConditionDefinition, len(compReq.Conditions))
@@ -221,7 +186,7 @@ func (h *StructuredPolicyHandler) validateSimpleCondition(sc SimpleConditionRequ
 		return fmt.Errorf("value is required")
 	}
 
-	// Add more specific validation as needed
+	// Validate operators
 	validOperators := map[string]bool{
 		"==": true, "!=": true, ">": true, ">=": true, "<": true, "<=": true,
 		"in": true, "not_in": true, "contains": true, "not_contains": true,
@@ -351,12 +316,188 @@ func (h *StructuredPolicyHandler) TestPolicy(c *gin.Context) {
 		return
 	}
 
-	// This would need to be implemented with a test user and temporary policy evaluation
-	// For now, return a placeholder response
+	// Get test user from database
+	testUser, err := h.userService.GetUserByID(c.Request.Context(), req.UserID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Failed to get test user",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Convert policy request to temporary model for testing
+	tempPolicy := model.ResourceAccessPolicy{
+		ResourceType: req.Policy.ResourceType,
+		ResourceID:   req.Policy.ResourceID,
+		PolicyType:   req.Policy.PolicyType,
+	}
+
+	// Convert conditions
+	conditions := make([]model.PolicyCondition, len(req.Policy.Conditions))
+	for i, condReq := range req.Policy.Conditions {
+		condition, err := h.processCondition(condReq, req.Policy.ResourceType, req.Policy.ResourceID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Invalid policy condition",
+				"details": err.Error(),
+			})
+			return
+		}
+		conditions[i] = condition
+	}
+	tempPolicy.Conditions = conditions
+
+	// Test policy evaluation
+	result, err := h.evaluateTemporaryPolicy(c.Request.Context(), testUser, req.ResourceType, req.ResourceID, req.Action, &tempPolicy)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to evaluate policy",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Return detailed test result
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Policy test functionality not yet implemented",
-		"request": req,
+		"test_result": gin.H{
+			"allowed":      result.Allowed,
+			"user":         result.UserInfo,
+			"policy":       result.PolicyInfo,
+			"evaluation":   result.EvaluationDetails,
+			"restrictions": result.RestrictionResults,
+			"timestamp":    time.Now(),
+		},
 	})
+}
+
+// PolicyTestResult represents the result of a policy test
+type PolicyTestResult struct {
+	Allowed            bool                   `json:"allowed"`
+	UserInfo           map[string]interface{} `json:"user_info"`
+	PolicyInfo         map[string]interface{} `json:"policy_info"`
+	EvaluationDetails  []ConditionResult      `json:"evaluation_details"`
+	RestrictionResults map[string]bool        `json:"restriction_results"`
+}
+
+// ConditionResult represents the evaluation result of a single condition
+type ConditionResult struct {
+	ConditionName string `json:"condition_name"`
+	Result        bool   `json:"result"`
+	Reason        string `json:"reason"`
+}
+
+// evaluateTemporaryPolicy evaluates a policy without persisting it
+func (h *StructuredPolicyHandler) evaluateTemporaryPolicy(ctx context.Context, user *model.User, resourceType, resourceID, action string, policy *model.ResourceAccessPolicy) (*PolicyTestResult, error) {
+	result := &PolicyTestResult{
+		UserInfo: map[string]interface{}{
+			"id":        user.ID,
+			"username":  user.Username,
+			"role":      user.Role,
+			"age":       user.Age,
+			"location":  user.Location,
+			"premium":   user.Premium,
+			"vip_level": user.VIPLevel,
+		},
+		PolicyInfo: map[string]interface{}{
+			"resource_type": policy.ResourceType,
+			"resource_id":   policy.ResourceID,
+			"policy_type":   policy.PolicyType,
+			"conditions":    len(policy.Conditions),
+		},
+		EvaluationDetails:  make([]ConditionResult, 0),
+		RestrictionResults: make(map[string]bool),
+	}
+
+	// Evaluate each condition
+	overallAllowed := false
+	for _, condition := range policy.Conditions {
+		conditionResult, err := h.evaluateConditionWithDetails(ctx, user, condition)
+		if err != nil {
+			return nil, fmt.Errorf("failed to evaluate condition %s: %w", condition.Name, err)
+		}
+
+		result.EvaluationDetails = append(result.EvaluationDetails, *conditionResult)
+
+		if conditionResult.Result {
+			overallAllowed = true
+			if policy.PolicyType == "allow" {
+				break // For allow policies, first matching condition grants access
+			}
+		}
+	}
+
+	// Apply policy type
+	if policy.PolicyType == "deny" {
+		overallAllowed = !overallAllowed
+	}
+
+	// Check restrictions if access is allowed
+	if overallAllowed && policy.Restrictions != nil {
+		restrictionAllowed, err := h.checkRestrictionsWithDetails(ctx, user, policy.Restrictions)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check restrictions: %w", err)
+		}
+		result.RestrictionResults = restrictionAllowed
+
+		// If any restriction fails, deny access
+		for _, allowed := range restrictionAllowed {
+			if !allowed {
+				overallAllowed = false
+				break
+			}
+		}
+	}
+
+	result.Allowed = overallAllowed
+	return result, nil
+}
+
+// evaluateConditionWithDetails evaluates a condition and returns detailed results
+func (h *StructuredPolicyHandler) evaluateConditionWithDetails(ctx context.Context, user *model.User, condition model.PolicyCondition) (*ConditionResult, error) {
+	// Use the policy engine's evaluation logic
+	allowed, err := h.policyEngine.EvaluateCondition(ctx, user, condition)
+	if err != nil {
+		return nil, err
+	}
+
+	reason := "Condition evaluation completed"
+	if !allowed {
+		reason = "Condition requirements not met"
+	}
+
+	return &ConditionResult{
+		ConditionName: condition.Name,
+		Result:        allowed,
+		Reason:        reason,
+	}, nil
+}
+
+// checkRestrictionsWithDetails checks restrictions and returns detailed results
+func (h *StructuredPolicyHandler) checkRestrictionsWithDetails(ctx context.Context, user *model.User, restrictionsData json.RawMessage) (map[string]bool, error) {
+	var restrictions model.PolicyRestrictions
+	if err := json.Unmarshal(restrictionsData, &restrictions); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal restrictions: %w", err)
+	}
+
+	results := make(map[string]bool)
+
+	// Check time restrictions
+	if restrictions.TimeRestrictions != nil {
+		timeAllowed := h.policyEngine.CheckTimeRestriction(restrictions.TimeRestrictions)
+		results["time_restrictions"] = timeAllowed
+	}
+
+	// Add more restriction checks as needed
+	if restrictions.DeviceRestrictions != nil {
+		results["device_restrictions"] = true // Placeholder
+	}
+
+	if restrictions.IPRestrictions != nil {
+		results["ip_restrictions"] = true // Placeholder
+	}
+
+	return results, nil
 }
 
 // GetPolicyTemplates は利用可能なポリシーテンプレートを返す
@@ -367,13 +508,18 @@ func (h *StructuredPolicyHandler) GetPolicyTemplates(c *gin.Context) {
 			"name":        "年齢制限",
 			"description": "指定した年齢以上のユーザーのみアクセス可能",
 			"template": PolicyConditionRequest{
-				Name: "年齢制限",
-				Type: "simple",
-				Conditions: []SimpleConditionRequest{
-					{
-						Attribute: "age",
-						Operator:  ">=",
-						Value:     18,
+				Name:        "年齢制限",
+				Description: "指定した年齢以上のユーザーのみアクセス可能",
+				Condition: CompositeConditionRequest{
+					Conditions: []NestedConditionRequest{
+						{
+							Type: "simple",
+							Simple: &SimpleConditionRequest{
+								Attribute: "age",
+								Operator:  ">=",
+								Value:     18,
+							},
+						},
 					},
 				},
 			},
@@ -383,13 +529,18 @@ func (h *StructuredPolicyHandler) GetPolicyTemplates(c *gin.Context) {
 			"name":        "地域制限",
 			"description": "指定した地域のユーザーのみアクセス可能",
 			"template": PolicyConditionRequest{
-				Name: "地域制限",
-				Type: "simple",
-				Conditions: []SimpleConditionRequest{
-					{
-						Attribute: "location",
-						Operator:  "in",
-						Value:     []string{"JP", "US"},
+				Name:        "地域制限",
+				Description: "指定した地域のユーザーのみアクセス可能",
+				Condition: CompositeConditionRequest{
+					Conditions: []NestedConditionRequest{
+						{
+							Type: "simple",
+							Simple: &SimpleConditionRequest{
+								Attribute: "location",
+								Operator:  "in",
+								Value:     []string{"JP", "US"},
+							},
+						},
 					},
 				},
 			},
@@ -399,13 +550,18 @@ func (h *StructuredPolicyHandler) GetPolicyTemplates(c *gin.Context) {
 			"name":        "VIP限定",
 			"description": "指定したVIPレベル以上のユーザーのみアクセス可能",
 			"template": PolicyConditionRequest{
-				Name: "VIP限定",
-				Type: "simple",
-				Conditions: []SimpleConditionRequest{
-					{
-						Attribute: "vip_level",
-						Operator:  ">=",
-						Value:     3,
+				Name:        "VIP限定",
+				Description: "指定したVIPレベル以上のユーザーのみアクセス可能",
+				Condition: CompositeConditionRequest{
+					Conditions: []NestedConditionRequest{
+						{
+							Type: "simple",
+							Simple: &SimpleConditionRequest{
+								Attribute: "vip_level",
+								Operator:  ">=",
+								Value:     3,
+							},
+						},
 					},
 				},
 			},
@@ -415,13 +571,18 @@ func (h *StructuredPolicyHandler) GetPolicyTemplates(c *gin.Context) {
 			"name":        "プレミアム会員限定",
 			"description": "プレミアム会員のみアクセス可能",
 			"template": PolicyConditionRequest{
-				Name: "プレミアム会員限定",
-				Type: "simple",
-				Conditions: []SimpleConditionRequest{
-					{
-						Attribute: "premium",
-						Operator:  "==",
-						Value:     true,
+				Name:        "プレミアム会員限定",
+				Description: "プレミアム会員のみアクセス可能",
+				Condition: CompositeConditionRequest{
+					Conditions: []NestedConditionRequest{
+						{
+							Type: "simple",
+							Simple: &SimpleConditionRequest{
+								Attribute: "premium",
+								Operator:  "==",
+								Value:     true,
+							},
+						},
 					},
 				},
 			},
@@ -431,9 +592,20 @@ func (h *StructuredPolicyHandler) GetPolicyTemplates(c *gin.Context) {
 			"name":        "営業時間制限",
 			"description": "指定した時間帯のみアクセス可能",
 			"template": PolicyConditionRequest{
-				Name:       "営業時間制限",
-				Type:       "simple",
-				Conditions: []SimpleConditionRequest{}, // 時間制限は別の方法で設定
+				Name:        "営業時間制限",
+				Description: "指定した時間帯のみアクセス可能（時間制限は別途設定）",
+				Condition: CompositeConditionRequest{
+					Conditions: []NestedConditionRequest{
+						{
+							Type: "simple",
+							Simple: &SimpleConditionRequest{
+								Attribute: "role",
+								Operator:  "!=",
+								Value:     "guest",
+							},
+						},
+					},
+				},
 			},
 			"restrictions": PolicyRestrictionsRequest{
 				TimeRestrictions: &TimeRestrictionRequest{
@@ -450,13 +622,18 @@ func (h *StructuredPolicyHandler) GetPolicyTemplates(c *gin.Context) {
 			"description":   "指定金額以上の注文に対する制限",
 			"resource_type": "orders",
 			"template": PolicyConditionRequest{
-				Name: "高額注文制限",
-				Type: "simple",
-				Conditions: []SimpleConditionRequest{
-					{
-						Attribute: "amount",
-						Operator:  ">",
-						Value:     10000,
+				Name:        "高額注文制限",
+				Description: "指定金額以上の注文に対する制限",
+				Condition: CompositeConditionRequest{
+					Conditions: []NestedConditionRequest{
+						{
+							Type: "simple",
+							Simple: &SimpleConditionRequest{
+								Attribute: "amount",
+								Operator:  ">",
+								Value:     10000,
+							},
+						},
 					},
 				},
 			},
@@ -467,13 +644,18 @@ func (h *StructuredPolicyHandler) GetPolicyTemplates(c *gin.Context) {
 			"description":   "エンタープライズ顧客のみアクセス可能",
 			"resource_type": "customers",
 			"template": PolicyConditionRequest{
-				Name: "エンタープライズ顧客限定",
-				Type: "simple",
-				Conditions: []SimpleConditionRequest{
-					{
-						Attribute: "customer_type",
-						Operator:  "==",
-						Value:     "enterprise",
+				Name:        "エンタープライズ顧客限定",
+				Description: "エンタープライズ顧客のみアクセス可能",
+				Condition: CompositeConditionRequest{
+					Conditions: []NestedConditionRequest{
+						{
+							Type: "simple",
+							Simple: &SimpleConditionRequest{
+								Attribute: "customer_type",
+								Operator:  "==",
+								Value:     "enterprise",
+							},
+						},
 					},
 				},
 			},
@@ -483,9 +665,9 @@ func (h *StructuredPolicyHandler) GetPolicyTemplates(c *gin.Context) {
 			"name":        "年齢制限とプレミアム会員（AND条件）",
 			"description": "18歳以上かつプレミアム会員のユーザーのみアクセス可能",
 			"template": PolicyConditionRequest{
-				Name: "年齢制限とプレミアム会員",
-				Type: "composite",
-				CompositeCondition: &CompositeConditionRequest{
+				Name:        "年齢制限とプレミアム会員",
+				Description: "18歳以上かつプレミアム会員のユーザーのみアクセス可能",
+				Condition: CompositeConditionRequest{
 					LogicalOp: "AND",
 					Conditions: []NestedConditionRequest{
 						{
@@ -513,9 +695,9 @@ func (h *StructuredPolicyHandler) GetPolicyTemplates(c *gin.Context) {
 			"name":        "VIP会員または特別地域（OR条件）",
 			"description": "VIPレベル3以上またはJP/USのユーザーがアクセス可能",
 			"template": PolicyConditionRequest{
-				Name: "VIP会員または特別地域",
-				Type: "composite",
-				CompositeCondition: &CompositeConditionRequest{
+				Name:        "VIP会員または特別地域",
+				Description: "VIPレベル3以上またはJP/USのユーザーがアクセス可能",
+				Condition: CompositeConditionRequest{
 					LogicalOp: "OR",
 					Conditions: []NestedConditionRequest{
 						{
@@ -543,9 +725,9 @@ func (h *StructuredPolicyHandler) GetPolicyTemplates(c *gin.Context) {
 			"name":        "複雑な入れ子条件（複合の複合）",
 			"description": "プレミアム会員で（VIP3以上またはJP地域）かつ18歳以上",
 			"template": PolicyConditionRequest{
-				Name: "複雑な入れ子条件",
-				Type: "composite",
-				CompositeCondition: &CompositeConditionRequest{
+				Name:        "複雑な入れ子条件",
+				Description: "プレミアム会員で（VIP3以上またはJP地域）かつ18歳以上",
+				Condition: CompositeConditionRequest{
 					LogicalOp: "AND",
 					Conditions: []NestedConditionRequest{
 						{
@@ -625,7 +807,7 @@ func (h *StructuredPolicyHandler) GetOperators(c *gin.Context) {
 	c.JSON(http.StatusOK, operators)
 }
 
-// GetAttributes は利用可能な属性を返す
+// GetAttributes は利用可能な属性を返す（統一されたCompositeCondition用）
 func (h *StructuredPolicyHandler) GetAttributes(c *gin.Context) {
 	attributes := []gin.H{
 		{
@@ -636,33 +818,59 @@ func (h *StructuredPolicyHandler) GetAttributes(c *gin.Context) {
 		},
 		{
 			"name":        "location",
-			"label":       "地域",
+			"label":       "所在地",
 			"type":        "string",
-			"description": "ユーザーの地域コード",
-			"values":      []string{"JP", "US", "EU", "KR", "CN"},
+			"description": "ユーザーの所在地（国コード）",
 		},
 		{
 			"name":        "vip_level",
 			"label":       "VIPレベル",
 			"type":        "numeric",
-			"description": "ユーザーのVIPレベル（0-5）",
+			"description": "ユーザーのVIPレベル（0-10）",
 		},
 		{
 			"name":        "premium",
 			"label":       "プレミアム会員",
 			"type":        "boolean",
-			"description": "プレミアム会員かどうか",
+			"description": "プレミアム会員フラグ",
 		},
 		{
 			"name":        "role",
 			"label":       "ロール",
 			"type":        "string",
-			"description": "ユーザーのロール",
-			"values":      []string{"admin", "operator", "customer"},
+			"description": "ユーザーのロール（admin, user, guest等）",
 		},
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"attributes": attributes,
+		"user_attributes": attributes,
+		"resource_attributes": gin.H{
+			"products": []gin.H{
+				{"name": "price", "label": "価格", "type": "numeric"},
+				{"name": "category", "label": "カテゴリ", "type": "string"},
+				{"name": "age_limit", "label": "年齢制限", "type": "numeric"},
+				{"name": "region", "label": "地域", "type": "string"},
+				{"name": "is_adult", "label": "成人向け", "type": "boolean"},
+				{"name": "rating", "label": "レーティング", "type": "string"},
+			},
+			"orders": []gin.H{
+				{"name": "amount", "label": "金額", "type": "numeric"},
+				{"name": "status", "label": "ステータス", "type": "string"},
+				{"name": "priority", "label": "優先度", "type": "string"},
+				{"name": "region", "label": "地域", "type": "string"},
+				{"name": "days_old", "label": "経過日数", "type": "numeric"},
+			},
+			"customers": []gin.H{
+				{"name": "customer_type", "label": "顧客タイプ", "type": "string"},
+				{"name": "credit_limit", "label": "与信限度額", "type": "numeric"},
+				{"name": "total_purchases", "label": "総購入額", "type": "numeric"},
+				{"name": "account_status", "label": "アカウント状態", "type": "string"},
+				{"name": "payment_terms", "label": "支払条件", "type": "string"},
+				{"name": "industry", "label": "業界", "type": "string"},
+				{"name": "employee_count", "label": "従業員数", "type": "numeric"},
+				{"name": "risk_score", "label": "リスクスコア", "type": "numeric"},
+				{"name": "account_age", "label": "アカウント経過日数", "type": "numeric"},
+			},
+		},
 	})
 }
