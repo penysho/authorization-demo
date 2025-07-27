@@ -26,7 +26,8 @@
   "markdownlint.config": {
     "no-duplicate-heading": false,
     "no-inline-html": false,
-    "no-alt-text": false
+    "no-alt-text": false,
+    "fenced-code-language": false
   },
 
   // 以下CloudFormation用に要追加設定
