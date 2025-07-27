@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Sync feature spec from Google Drive to local directory
+"""Sync feature spec from Google Drive to local directory.
 
 This script downloads Google Docs from a specified folder and converts them to Markdown format.
 The downloaded files are saved to the docs/feature-spec directory.
@@ -10,10 +9,10 @@ Usage:
 """
 
 import os
+from pathlib import Path
 import re
 import sys
-from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from dotenv import find_dotenv, load_dotenv
@@ -37,9 +36,7 @@ EXPORT_MIME_TYPE = "text/markdown"  # Export directly as Markdown
 
 
 class GoogleDocsDownloader:
-    """
-    Downloads Google Docs from a specified folder and converts them to Markdown format.
-    """
+    """Downloads Google Docs from a specified folder and converts them to Markdown format."""
 
     def __init__(self):
         """Initialize the downloader with Google API credentials."""
@@ -47,8 +44,7 @@ class GoogleDocsDownloader:
         self._authenticate()
 
     def _authenticate(self) -> None:
-        """
-        Authenticate with Google APIs using OAuth2.
+        """Authenticate with Google APIs using OAuth2.
 
         Raises:
             Exception: If authentication fails
@@ -70,19 +66,20 @@ class GoogleDocsDownloader:
                         "Please download credentials.json from Google Cloud Console"
                     )
 
-                flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    CREDENTIALS_FILE, SCOPES
+                )
                 creds = flow.run_local_server(port=0)
 
             # Save credentials for next run
-            with open(TOKEN_FILE, 'w') as token:
+            with open(TOKEN_FILE, "w") as token:
                 token.write(creds.to_json())
 
         # Build service object
-        self.drive_service = build('drive', 'v3', credentials=creds)
+        self.drive_service = build("drive", "v3", credentials=creds)
 
     def _extract_folder_id(self, folder_url: str) -> str:
-        """
-        Extract folder ID from Google Drive folder URL.
+        """Extract folder ID from Google Drive folder URL.
 
         Args:
             folder_url: Google Drive folder URL
@@ -107,9 +104,8 @@ class GoogleDocsDownloader:
 
         raise ValueError(f"Invalid Google Drive folder URL: {folder_url}")
 
-    def _get_folder_contents(self, folder_id: str) -> List[Dict[str, Any]]:
-        """
-        Get all files and folders within a specified folder.
+    def _get_folder_contents(self, folder_id: str) -> list[dict[str, Any]]:
+        """Get all files and folders within a specified folder.
 
         Args:
             folder_id: Google Drive folder ID
@@ -118,19 +114,24 @@ class GoogleDocsDownloader:
             List of file/folder metadata
         """
         try:
-            results = self.drive_service.files().list(
-                q=f"'{folder_id}' in parents and trashed=false",
-                fields="files(id,name,mimeType,parents)"
-            ).execute()
+            results = (
+                self.drive_service.files()
+                .list(
+                    q=f"'{folder_id}' in parents and trashed=false",
+                    fields="files(id,name,mimeType,parents)",
+                )
+                .execute()
+            )
 
-            return results.get('files', [])
+            return results.get("files", [])
         except HttpError as error:
             print(f"Error getting folder contents: {error}")
             return []
 
-    def _get_docs_recursively(self, folder_id: str, path_prefix: str = "") -> List[Dict[str, Any]]:
-        """
-        Recursively get all Google Docs from a folder and its subfolders.
+    def _get_docs_recursively(
+        self, folder_id: str, path_prefix: str = ""
+    ) -> list[dict[str, Any]]:
+        """Recursively get all Google Docs from a folder and its subfolders.
 
         Args:
             folder_id: Google Drive folder ID
@@ -143,25 +144,20 @@ class GoogleDocsDownloader:
         contents = self._get_folder_contents(folder_id)
 
         for item in contents:
-            item_name = item['name']
+            item_name = item["name"]
             item_path = f"{path_prefix}/{item_name}" if path_prefix else item_name
 
-            if item['mimeType'] == GOOGLE_DOCS_MIME_TYPE:
-                docs.append({
-                    'id': item['id'],
-                    'name': item_name,
-                    'path': item_path
-                })
-            elif item['mimeType'] == FOLDER_MIME_TYPE:
+            if item["mimeType"] == GOOGLE_DOCS_MIME_TYPE:
+                docs.append({"id": item["id"], "name": item_name, "path": item_path})
+            elif item["mimeType"] == FOLDER_MIME_TYPE:
                 # Recursively get docs from subfolder
-                subdocs = self._get_docs_recursively(item['id'], item_path)
+                subdocs = self._get_docs_recursively(item["id"], item_path)
                 docs.extend(subdocs)
 
         return docs
 
     def _sanitize_filename(self, filename: str) -> str:
-        """
-        Sanitize filename for filesystem.
+        """Sanitize filename for filesystem.
 
         Args:
             filename: Original filename
@@ -170,9 +166,9 @@ class GoogleDocsDownloader:
             Sanitized filename safe for filesystem
         """
         # Remove or replace invalid characters
-        sanitized = re.sub(r'[<>:"/\\|?*]', '_', filename)
+        sanitized = re.sub(r'[<>:"/\\|?*]', "_", filename)
         # Remove leading/trailing spaces and dots
-        sanitized = sanitized.strip(' .')
+        sanitized = sanitized.strip(" .")
         # Ensure it's not empty
         if not sanitized:
             sanitized = "unnamed_document"
@@ -180,8 +176,7 @@ class GoogleDocsDownloader:
         return sanitized
 
     def _export_doc_as_markdown(self, doc_id: str, file_path: str) -> bool:
-        """
-        Export a Google Doc as Markdown format using Drive API export.
+        """Export a Google Doc as Markdown format using Drive API export.
 
         Args:
             doc_id: Google Docs document ID
@@ -192,19 +187,20 @@ class GoogleDocsDownloader:
         """
         try:
             # Export document directly as Markdown using Drive API
-            export_response = self.drive_service.files().export(
-                fileId=doc_id,
-                mimeType=EXPORT_MIME_TYPE
-            ).execute()
+            export_response = (
+                self.drive_service.files()
+                .export(fileId=doc_id, mimeType=EXPORT_MIME_TYPE)
+                .execute()
+            )
 
             # Decode the Markdown content
-            markdown_content = export_response.decode('utf-8')
+            markdown_content = export_response.decode("utf-8")
 
             # Create directory if it doesn't exist
             os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
             # Write content to file
-            with open(file_path, 'w', encoding='utf-8') as f:
+            with open(file_path, "w", encoding="utf-8") as f:
                 f.write(markdown_content)
 
             print(f"Exported as Markdown: {file_path}")
@@ -218,9 +214,7 @@ class GoogleDocsDownloader:
             return False
 
     def download_all_docs(self) -> None:
-        """
-        Download all Google Docs from the configured folder to the output directory.
-        """
+        """Download all Google Docs from the configured folder to the output directory."""
         try:
             # Extract folder ID from URL
             folder_id = self._extract_folder_id(GOOGLE_DRIVE_FOLDER_URL)
@@ -238,20 +232,22 @@ class GoogleDocsDownloader:
             success_count = 0
             for doc in docs:
                 # Create file path
-                sanitized_name = self._sanitize_filename(doc['name'])
-                if not sanitized_name.endswith('.md'):
-                    sanitized_name += '.md'
+                sanitized_name = self._sanitize_filename(doc["name"])
+                if not sanitized_name.endswith(".md"):
+                    sanitized_name += ".md"
 
                 # Handle nested folders
-                relative_path = doc['path'].replace(doc['name'], sanitized_name)
+                relative_path = doc["path"].replace(doc["name"], sanitized_name)
                 file_path = OUTPUT_DIR / relative_path
 
                 # Export document as Markdown
-                if self._export_doc_as_markdown(doc['id'], str(file_path)):
+                if self._export_doc_as_markdown(doc["id"], str(file_path)):
                     success_count += 1
 
-            print(f"\nDownload completed: {success_count}/{len(docs)} documents "
-                  f"successfully downloaded")
+            print(
+                f"\nDownload completed: {success_count}/{len(docs)} documents "
+                f"successfully downloaded"
+            )
 
         except Exception as error:
             print(f"Error during download process: {error}")
@@ -268,7 +264,7 @@ def main():
         print("No .env file found. Please create one with GOOGLE_DRIVE_FOLDER_URL")
 
     # Re-read environment variables after loading .env
-    global GOOGLE_DRIVE_FOLDER_URL
+    global GOOGLE_DRIVE_FOLDER_URL  # noqa: PLW0603
     GOOGLE_DRIVE_FOLDER_URL = os.getenv("GOOGLE_DRIVE_FOLDER_URL", "")
 
     # Validate required environment variables

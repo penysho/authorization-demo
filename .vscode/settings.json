@@ -92,9 +92,11 @@
   // https://itc-engineering-blog.netlify.app/blogs/vscode-extensions-black-flake8
   // https://zenn.dev/yamaden/articles/23d3805fc85d99
   "[python]": {
-    "editor.defaultFormatter": "ms-python.black-formatter",
+    // "editor.defaultFormatter": "ms-python.black-formatter",
+    "editor.defaultFormatter": "charliermarsh.ruff",
     "editor.formatOnSave": true,
     "editor.codeActionsOnSave": {
+      "source.fixAll": "explicit",
       "source.organizeImports": "explicit"
     }
   },
@@ -120,5 +122,9 @@
     "editor.codeActionsOnSave": {
       "source.organizeImports": "explicit"
     }
-  }
+  },
+  "cursorpyright.analysis.extraPaths": [
+    "/usr/local/lib/python3.12/site-packages",
+    "scripts/.venv/lib/python3.12/site-packages"
+  ]
 }

@@ -111,19 +111,6 @@ make download-specs
 - **フォルダー構造保持**: Google Driveの階層構造を維持
 - **ファイル名サニタイズ**: ファイルシステムに対応した安全なファイル名に自動変換
 - **エラーハンドリング**: 個別のドキュメントでエラーが発生しても処理を継続
-- **自動.env検索**: 現在のディレクトリから親ディレクトリまで`.env`ファイルを自動検索
-
-### 変換サポート
-
-Google Docsの`text/markdown`エクスポートによりサポート：
-
-- 見出し（H1-H6）
-- 太字・斜体テキスト
-- 表（Markdown表形式）
-- リスト（番号付き・箇条書き）
-- リンク
-- 段落
-- その他Google Docsでサポートされている要素
 
 ## 技術詳細
 
@@ -140,12 +127,7 @@ Google Docsの`text/markdown`エクスポートによりサポート：
 - `google-api-python-client`: Google APIs の Python クライアント
 - `google-auth-*`: Google OAuth 認証
 - `python-dotenv`: 環境変数管理
-
-### 以前の実装からの改善
-
-1. **`text/html` + `html2text`** ✗ → **`text/markdown`直接** ✅
-2. **複雑な変換ロジック** ✗ → **シンプルなAPI呼び出し** ✅
-3. **外部ライブラリ依存** ✗ → **Google純正エクスポート** ✅
+- `ruff`: 超高速 Python リンター・フォーマッター（開発用）
 
 ## トラブルシューティング
 
@@ -197,17 +179,17 @@ No Google Docs found in the specified folder
 
 ## 開発
 
-### コードフォーマット
+### コードフォーマット・リンティング
 
 ```bash
-# Black でフォーマット
-uv run black .
+# Ruff でリンティング（自動修正付き）
+uv run ruff check --fix .
 
-# isort でimportを整理
-uv run isort .
+# Ruff でコードフォーマット
+uv run ruff format .
 
-# flake8 でリンティング
-uv run flake8 .
+# Ruff でリンティングとフォーマットを一括実行
+uv run ruff check --fix . && uv run ruff format .
 ```
 
 ### テスト実行
