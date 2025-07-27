@@ -102,6 +102,9 @@ $RECYCLE.BIN/
 
 .env
 .env.*
-
+credentials.json
+token.json
 authorization-demo
 __debug_bin*
+
+
