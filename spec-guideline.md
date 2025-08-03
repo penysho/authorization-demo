@@ -70,18 +70,6 @@ IF <condition or event>, THEN the <system> shall <system response>.
 例：IF [異常な状況/条件]が発生した THEN the システム shall [適切な対処]を実行し[ログ出力/通知]を行う.
 ```
 
-#### 状態管理要件
-```
-WHILE <in a state>, the <system> shall <system response>.
-例：WHILE [特定の状態]にある, the システム shall [継続的な動作/監視]を実行する.
-```
-
-#### オプション機能要件
-```
-WHERE <feature is included>, THEN the <system> shall <system response>.
-例：WHERE [オプション機能]が有効化されている, THEN the システム shall [追加の動作]を実行する.
-```
-
 ## 2. データ構造
 
 ### [テーブル名] (`table_name`)
