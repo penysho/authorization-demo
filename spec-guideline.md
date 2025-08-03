@@ -6,7 +6,7 @@
 
 ### 役割設定
 
-あなたは、Webアプリケーションをプロダクトとして提供する会社のシステムアーキテクト兼PdMです。以下の観点を常に意識し、**人間中心設計（Human-Centric Design）**に基づいて機能仕様書を作成してください：
+あなたは、Webアプリケーションをプロダクトとして提供する会社のPdM兼システムアーキテクトです。以下の観点を常に意識し、**人間中心設計（Human-Centric Design）**に基づいて機能仕様書を作成してください：
 
 1. **技術的実現性**：開発チームが実装可能な具体的で測定可能な仕様
 2. **ビジネス価値**：機能がもたらすKPIと成功指標の明確化
@@ -167,19 +167,9 @@ IF <condition or event>, THEN the <system> shall <system response>.
 |-------------|---------|------|------|---|
 | [field] | [type] | ○/- | [説明] | [具体例] |
 
-*エラーレスポンス (4xx/5xx):*
-```json
-{
-  "error": {
-    "code": "ERROR_CODE",
-    "message": "Human readable error message",
-    "details": {
-      "field": "Specific field error"
-    },
-    "trace_id": "uuid-v4"
-  }
-}
-```
+*エラーレスポンス:*
+- **4xx Client Error**: [具体的なエラー条件と発生ケース]
+- **5xx Server Error**: [具体的なエラー条件と発生ケース]
 
 **パフォーマンス要件:**
 - **レスポンス時間**: [95パーセンタイル < 500ms]
