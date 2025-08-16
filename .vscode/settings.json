@@ -27,7 +27,9 @@
     "no-duplicate-heading": false,
     "no-inline-html": false,
     "no-alt-text": false,
-    "fenced-code-language": false
+    "blanks-around-headings": false,
+    "blanks-around-lists": false,
+    "blanks-around-fences": false
   },
 
   // 以下CloudFormation用に要追加設定

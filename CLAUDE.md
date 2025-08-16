@@ -98,7 +98,7 @@ go vet ./...
 The application includes sample users for testing:
 
 - **alice** (admin): Full access, age 30, JP location, VIP level 5
-- **bob** (operator): Read/write access, age 25, US location, VIP level 3  
+- **bob** (operator): Read/write access, age 25, US location, VIP level 3
 - **charlie** (customer): Read-only, age 17, JP location, VIP level 0
 - **dave** (customer): Read-only, age 22, EU location, VIP level 1
 
